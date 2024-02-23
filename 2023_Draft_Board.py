@@ -1,3 +1,6 @@
+# A draft board creater for my best ball fantasy football league using data from the 2023 season. Primarily serves as
+# practice for the 2024 season as the data was not yet available at the time of development. Outputs a .csv file.
+
 import pandas as pd
 
 # turn off truncation of rows and columns if needed.
@@ -29,6 +32,7 @@ wr_df = wr_df[wr_stats]
 te_df = te_df[te_stats]
 
 # Set scoring weights for fantasy point calculations.
+# Free to change to match a given league.
 scoring_weights = {
     'receptions': 0.5,  # half-PPR
     'receiving_yds': 0.1,
@@ -119,6 +123,7 @@ board_df = board_df.merge(adp_df, how='left', on='Player')[['Player', 'POS', 'Fa
 board_df = board_df.dropna(subset=['ADP'])
 
 # Determine the ADP cutoff players to be used later in computing Value over Replacement (VOR) points.
+# Free to change the specific cutoff number.
 board_df_cutoff = board_df[:75]
 
 replacement_players = {
@@ -128,6 +133,7 @@ replacement_players = {
     'TE': ''
 }
 
+# Find the last player by position before the cutoff point and store them as replacement players.
 for _, row in board_df_cutoff.iterrows():
 
     position = row['POS'][:2]   # Cutoff the numerical part of the position data
@@ -136,18 +142,21 @@ for _, row in board_df_cutoff.iterrows():
     if position in replacement_players:
         replacement_players[position] = player
 
-replacement_values = {}  # initialize an empty dictionary
+# Store the computed Fantasy Points for each replacement player.
+replacement_values = {}
 
 for position, player_name in replacement_players.items():
     player = board_df.loc[board_df['Player'] == player_name]
 
     replacement_values[position] = player['Fantasy Points'].tolist()[0]
 
-
+# Compute the Value over Replacement score and store as a new column in the dataFrame.
 board_df['VOR'] = board_df.apply(
     lambda row: row['Fantasy Points'] - replacement_values.get(row['POS'][:2]), axis=1
 )
 
+# Compute and store the Z score of the VOR points.
 board_df['Z Score'] = board_df['VOR'].apply(lambda x: (x - board_df['VOR'].mean()) / board_df['VOR'].std())
 
-print(board_df)
+# Create a .csv file of the final draft board.
+board_df.to_csv('2023_Best_Ball_Draft_Board.csv')
