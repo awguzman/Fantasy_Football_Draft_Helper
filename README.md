@@ -4,7 +4,9 @@ This is a repository of python code intended to use data analysis and machine le
 We primarily use the Python data analysis library Pandas to perform data analysis on fantasy football data.
 
 Planned additions: 
+
 2024 Draft board
+
 Touchdown regression candidate calculator for all positions
 
 -------------------------------------------------------------------------------------------------------------------------------
