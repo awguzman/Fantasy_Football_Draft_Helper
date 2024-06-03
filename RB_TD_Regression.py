@@ -8,7 +8,7 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
 #   Import play-by-play data from 2012 to 2022 seasons (This may take a minute)
-seasons = range(2012, 2023)
+seasons = range(2000, 2023)
 pbp_df = nfl.import_pbp_data(seasons)
 
 #   Reduce to looking at relavent columns pertaining to rushing touchdowns.
