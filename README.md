@@ -16,3 +16,5 @@ Touchdown regression candidate calculator for all positions
 2024_Best_Ball_Draft_Board - An updated version of 2023_Draft_Board.py with minor adjustements made to account for changes in how FantasyPros stores data.
 
 RB_TD_Regression.py  -  Running back rushing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected rushing touchdowns vs actual rushing touchdowns for each running back in the 2023 season. This is compiles into a .csv file.
+
+WR_TD_Regression.py  -  Wide reciever passing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected receiving touchdowns vs actual touchdowns for each wide reciever in the 2023 season. This is compiles into a .csv file.
