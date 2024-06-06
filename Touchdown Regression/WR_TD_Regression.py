@@ -1,4 +1,3 @@
-import sys
 import pandas as pd
 import nfl_data_py as nfl
 import numpy as np
@@ -30,7 +29,7 @@ passing_df_probs = passing_df_probs.loc[passing_df_probs['pass_touchdown'] == 1]
 
 #   Get rid of pass_touchdown as this is implicit after getting rid of non-passing plays.
 passing_df_probs = passing_df_probs.drop('pass_touchdown', axis=1)
-print(passing_df_probs)
+
 #   Import 2023 play-by-play data and isolate players who scored receiving touchdowns.
 pbp_2023_df = nfl.import_pbp_data([2023])
 pbp_2023_df = pbp_2023_df[['receiver_player_name', 'receiver_player_id', 'posteam', 'pass_touchdown', 'yards_after_catch']].dropna()
