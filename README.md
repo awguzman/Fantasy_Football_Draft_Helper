@@ -5,7 +5,7 @@ We primarily use the Python data analysis library Pandas to perform data analysi
 
 Planned additions: 
 
-Touchdown regression candidate calculator for all positions
+Trade value calculator
 
 -------------------------------------------------------------------------------------------------------------------------------
 
