@@ -9,8 +9,10 @@ Touchdown regression candidate calculator for all positions
 
 -------------------------------------------------------------------------------------------------------------------------------
 
-Best_Ball_Draft_Board.py  -  We use Pandas to web scrape projected stats and average draft position (ADP) data from FantasyPros.com to compute projected fantasy points and value over replacement (VOR) points. This is compiled into a .csv file that can be used as a draft board for a Best Ball draft. Should be good to run every year following schedule release.
+Best_Ball_Draft_Board.py  -  We use Pandas to web scrape projected stats and average draft position (ADP) data from FantasyPros.com to compute projected fantasy points and value over replacement (VOR) points. This is compiled into a .csv file that can be used as a draft board for a Best Ball draft. Should be good to run every year following schedule release due to dependence on bye week dates and rookies.
 
 RB_TD_Regression.py  -  Running back rushing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected rushing touchdowns vs actual rushing touchdowns for each running back in the 2023 season. This is compiles into a .csv file.
 
 WR_TD_Regression.py  -  Wide reciever passing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected receiving touchdowns vs actual touchdowns for each wide reciever in the 2023 season. This is compiles into a .csv file.
+
+TE_TD_Regression.py  -  Does the same job as WR_TD_Regression.py but for the Tight End position.
