@@ -1,4 +1,4 @@
-# A draft board creater for my best ball fantasy football league using data from FantasyPros.com. Outputs a .csv file.
+# A draft board creator for my best ball fantasy football league using data from FantasyPros.com. Outputs a .csv file.
 
 import pandas as pd
 
@@ -6,7 +6,7 @@ import pandas as pd
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
-# Store html url's for each position measuring projected season stats for the 2023 season.
+# Store html url's for each position measuring projected season stats.
 qb_url = "https://www.fantasypros.com/nfl/projections/qb.php?week=draft"
 rb_url = "https://www.fantasypros.com/nfl/projections/rb.php?week=draft"
 wr_url = "https://www.fantasypros.com/nfl/projections/wr.php?week=draft"
@@ -92,8 +92,8 @@ adp_url = "https://www.fantasypros.com/nfl/adp/best-ball-overall.php"
 adp_df = pd.read_html(adp_url, header=0)[0]
 
 # Reformat the player name index in each DataFrame to match each other for merging.
-adp_df = adp_df.rename({'Player Team (Bye)': 'Player', 'Rank': 'ADP'}, axis=1)
-adp_df = adp_df[['Player', 'POS', 'ADP']]
+adp_df = adp_df.rename({'Player Team (Bye)': 'Player','POS': 'Rank', 'Rank': 'ADP'}, axis=1)
+adp_df = adp_df[['Player', 'Rank', 'ADP']]
 teams = ['ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE', 'DAL', 'DEN', 'DET', 'GB', 'HOU', 'IND', 'JAC', 'KC',
          'LV', 'LAR', 'LAC', 'MIA', 'MIN', 'NE', 'NO', 'NYG', 'NYJ', 'PHI', 'PIT', 'SF', 'SEA', 'TB', 'TEN', 'WAS']
 byes = ['(5)', '(6)', '(7)', '(8)', '(9)', '(10)', '(11)', '(12)', '(13)', '(14)']
@@ -118,8 +118,14 @@ adp_df = player_cleanup(adp_df)
 board_df = player_cleanup(board_df)
 
 # Merge ADP Dataframe with projected points DataFrame before sorting by ADP.
-board_df = board_df.merge(adp_df, how='left', on='Player')[['Player', 'POS', 'Fantasy Points', 'ADP']].sort_values(by='ADP')
+board_df = board_df.merge(adp_df, how='left', on='Player')[['Player', 'Rank', 'Fantasy Points', 'ADP']].sort_values(by='ADP')
 board_df = board_df.dropna(subset=['ADP'])
+
+board_df.insert(1, 'POS', '')
+for index, row in board_df.iterrows():
+    board_df.loc[index, 'POS'] = row['Rank'][:2]
+    if row['Rank'][:2] not in ['QB', 'RB', 'WR', 'TE']:
+        board_df.drop(index, inplace=True)
 
 # Determine the ADP cutoff players to be used later in computing Value over Replacement (VOR) points.
 # Free to change the specific cutoff number.
@@ -134,8 +140,7 @@ replacement_players = {
 
 # Find the last player by position before the cutoff point and store them as replacement players.
 for _, row in board_df_cutoff.iterrows():
-
-    position = row['POS'][:2]   # Cutoff the numerical part of the position data
+    position = row['Rank'][:2]   # Cutoff the numerical part of the position data
     player = row['Player']
 
     if position in replacement_players:
@@ -150,9 +155,7 @@ for position, player_name in replacement_players.items():
     replacement_values[position] = player['Fantasy Points'].tolist()[0]
 
 # Compute the Value over Replacement score and store as a new column in the dataFrame.
-board_df['VOR'] = board_df.apply(
-    lambda row: row['Fantasy Points'] - replacement_values.get(row['POS'][:2]), axis=1
-)
+board_df['VOR'] = board_df.apply(lambda row: row['Fantasy Points'] - replacement_values.get(row['Rank'][:2]), axis=1)
 
 # Compute and store the Z score of the VOR points.
 board_df['Z Score'] = board_df['VOR'].apply(lambda x: (x - board_df['VOR'].mean()) / board_df['VOR'].std())
