@@ -1,18 +1,21 @@
 # Best_Ball_Draft_Helper
-This is a repository of python code intended to use data analysis and machine learning techniques to help me draft in my Best Ball League.
+This is a repository of python code intended to use data analysis and machine learning techniques to help me draft in my Fantasy football Leagues.
 
 We primarily use the Python data analysis library Pandas to perform data analysis on fantasy football data.
 
 Planned additions: 
 
-Trade value calculator
+Advance Actor-Critic method for optimal draft picks
 
 -------------------------------------------------------------------------------------------------------------------------------
+**Best Ball**
 
-Best_Ball_Draft_Board.py  -  We use Pandas to web scrape projected stats and average draft position (ADP) data from FantasyPros.com to compute projected fantasy points and value over replacement (VOR) points. This is compiled into a .csv file that can be used as a draft board for a Best Ball draft. Should be good to run every year following schedule release due to dependence on bye week dates and rookies.
+Contains three python scripts. Get_Sleeper_Player_Map.py should be run once a season after each draft to update it with rookies. Best_Ball_Draft_Board.py should be run once on draft day and generates a complete best ball draft board including projected fantasy point, ADP, VOR and other statistical data. Best_Ball_Live_Draft.py is meant to be run during each of your Sleeper.com picks and provides an up-to-date version of the best ball draft board.
 
-RB_TD_Regression.py  -  Running back rushing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected rushing touchdowns vs actual rushing touchdowns for each running back in the 2023 season. This is compiles into a .csv file.
+**Dynasty**
 
-WR_TD_Regression.py  -  Wide reciever passing touchdown regression candidate calculator for the 2023 season. Imports play-by-play data from 2000-2022 via nfl_data_py and computes the expected receiving touchdowns vs actual touchdowns for each wide reciever in the 2023 season. This is compiles into a .csv file.
+Contains two python scripts and one called auxilary file. Get_Sleeper_Player_Map.py should be run once a season after each draft to update it with rookies. Dynasty_Draft_Board.py should be run once on draft day and provides a complete dynasty draft board for your Sleeper.com league.
 
-TE_TD_Regression.py  -  Does the same job as WR_TD_Regression.py but for the Tight End position.
+**Touchdown Regression**
+
+Contains three python scripts meant to compute touchdown regression candidacy for the 2023 season (will update each offseason). We import play-by-play data from 2000-2022 via nfl_data_py and compute the expected touchdowns vs actual touchdowns for each non-rookie RB, WR, and TE player in the 2023 season. Each script generates a .csv file.
