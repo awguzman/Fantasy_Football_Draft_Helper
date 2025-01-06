@@ -31,8 +31,8 @@ class QAgent:
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
 
-        self.q_network = QNetwork(state_size, action_size, hidden_size=100)
-        self.target_network = QNetwork(state_size, action_size, hidden_size=100)
+        self.q_network = QNetwork(state_size, action_size, hidden_size=action_size*1)
+        self.target_network = QNetwork(state_size, action_size, hidden_size=action_size*1)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()
 
@@ -175,8 +175,8 @@ class FantasyDraft:
                     agent.target_network.load_state_dict(agent.q_network.state_dict())
 
             # Print episode summary
+            print(f"Episode {episode + 1}/{num_episodes} completed.")
             if verbose:
-                print(f"Episode {episode + 1}/{num_episodes} completed.")
                 for agent in self.agents:
                     print(
                         f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
@@ -196,25 +196,29 @@ class FantasyDraft:
         plt.show()
 
 # Debug draft environment
-player_data = pd.DataFrame({
-    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-})
+# player_data = pd.DataFrame({
+#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+# })
 
-# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 5
-num_rounds = 4
-position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
+num_teams = 12
+num_rounds = 20
+position_limits = {"QB": 3, "RB": 6, "WR": 8, "TE": 3}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
 action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 
 # Debug Training
-draft_simulator.train(1000, verbose=True)
+draft_simulator.train(500, verbose=False)
 draft_simulator.plot_results()
+# Now run a draft with no exploration.
+for agent in draft_simulator.agents:
+    agent.epsilon = 0
+draft_simulator.run_episode(verbose=True)
