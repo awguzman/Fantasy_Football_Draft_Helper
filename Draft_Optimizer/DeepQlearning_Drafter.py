@@ -8,7 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 
 class QNetwork(nn.Module):
-    def __init__(self, state_size, action_size, hidden_size=64):
+    """Define neural network used to predict our Q-values."""
+    def __init__(self, state_size, action_size, hidden_size):
         super(QNetwork, self).__init__()
         self.fc1 = nn.Linear(state_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
@@ -21,7 +22,7 @@ class QNetwork(nn.Module):
 
 class QAgent:
     def __init__(self, team_id, state_size, action_size, learning_rate=0.001, discount_factor=0.9, epsilon=1.0,
-                 epsilon_decay=0.99, epsilon_min=0.01):
+                 epsilon_decay=0.995, epsilon_min=0.01):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.learning_rate = learning_rate
@@ -30,8 +31,8 @@ class QAgent:
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
 
-        self.q_network = QNetwork(state_size, action_size)
-        self.target_network = QNetwork(state_size, action_size)
+        self.q_network = QNetwork(state_size, action_size, hidden_size=100)
+        self.target_network = QNetwork(state_size, action_size, hidden_size=100)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()
 
@@ -45,21 +46,38 @@ class QAgent:
         self.total_reward = 0
         self.position_counts = {position: 0 for position in position_limits}  # Reset position counts
 
-    def get_state(self, available_players, round_number):
-        """Get the current state representation for the agent."""
+    def get_state(self, round_number, all_agents):
+        """Get the current state representation for the agent, including information about other teams."""
+        # Current agent's state
         position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32)
         round_tensor = torch.tensor([round_number], dtype=torch.float32)
-        return torch.cat((position_counts_tensor, round_tensor))
+
+        # Other teams' position counts
+        other_teams_counts = []
+        for agent in all_agents:
+            if agent.team_id != self.team_id:
+                other_teams_counts.extend(agent.position_counts.values())
+        other_teams_tensor = torch.tensor(other_teams_counts, dtype=torch.float32)
+
+        # Combine into a single state tensor
+        return torch.cat((position_counts_tensor, round_tensor, other_teams_tensor))
 
     def choose_action(self, state, available_players):
         """Choose an action using an epsilon-greedy policy."""
         state_tensor = state.unsqueeze(0)  # Add batch dimension
+        available_indices = available_players.index.tolist()  # Get valid indices
+
         if random.random() < self.epsilon:  # With probability epsilon, choose a random action.
-            return random.choice(available_players.index.tolist())
+            return random.choice(available_indices)
         else:  # Otherwise, choose the best action.
             with torch.no_grad():
-                q_values = self.q_network(state_tensor)
-                return available_players.index[q_values.argmax().item()]
+                q_values = self.q_network(state_tensor).squeeze(0)  # Get Q-values for all actions
+
+                # Mask out unavailable actions
+                q_values_masked = torch.full_like(q_values, float('-inf'))
+                q_values_masked[available_indices] = q_values[available_indices]
+
+                return q_values_masked.argmax().item()
 
     def update_q_network(self, state, action, reward, next_state, done):
         """Update the Q-network using the Q-learning formula."""
@@ -109,7 +127,7 @@ class FantasyDraft:
         while self.current_round < self.num_rounds:
             for team in self.draft_order:
                 agent = self.agents[team]
-                state = agent.get_state(self.available_players, self.current_round)
+                state = agent.get_state(self.current_round, self.agents)
 
                 # Filter available players to respect position caps
                 valid_players = self.available_players[
@@ -137,7 +155,7 @@ class FantasyDraft:
 
                 self.available_players = self.available_players.drop(action)
 
-                next_state = agent.get_state(self.available_players, self.current_round + 1)
+                next_state = agent.get_state(self.current_round + 1, self.agents)
                 agent.update_q_network(state, action, reward, next_state, done=False)
 
             self.current_round += 1  # Move to next round after all teams have picked.
@@ -169,7 +187,7 @@ class FantasyDraft:
         plt.figure(figsize=(12, 6))
         for team_id, rewards in self.reward_history.items():
             # Compute a moving average for total rewards.
-            smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
+            smoothed_rewards = pd.Series(rewards).rolling(window=10).mean()
             plt.plot(smoothed_rewards, label=f"Team {team_id} Total Rewards")
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
@@ -190,10 +208,10 @@ player_data = pd.DataFrame({
 # player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 2
+num_teams = 5
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
-state_size = len(position_limits) + 1  # Position counts + round number
+state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
 action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 

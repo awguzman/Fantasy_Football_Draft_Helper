@@ -32,13 +32,13 @@ class QAgent:
         """Reset the agent's state for a new episode."""
         self.drafted_players = []
         self.total_reward = 0
-        self.position_counts = {position: 0 for position in position_limits}  # Reset position counts
+        self.position_counts = {position: 0 for position in position_limits}
 
     def reset_q_table(self):
-        """Reset the Q-table."""
+        """Reset the Q-table. Used for experimenting with different parameters"""
         self.q_table = defaultdict(float)
 
-    def get_state(self, available_players, round_number):
+    def get_state(self, round_number):
         """Get the current state representation for the agent."""
         return (tuple(sorted(self.position_counts)), round_number)
 
@@ -64,7 +64,7 @@ class FantasyDraft:
         self.player_data = player_data  # Expects a pandas DataFrame.
         self.num_teams = num_teams
         self.num_rounds = num_rounds
-        self.agents = [QAgent(team_id=i) for i in range(num_teams)]
+        self.agents = [QAgent(team_id=i) for i in range(num_teams)]  # Initialize an agent for each team.
         self.reset_draft()
         self.reward_history = {i: [] for i in range(num_teams)}  # Track rewards for debug purposes.
         self.draft_order = list(range(num_teams))
@@ -84,9 +84,9 @@ class FantasyDraft:
         while self.current_round < self.num_rounds:
             for team in self.draft_order:
                 agent = self.agents[team]
-                state = agent.get_state(self.available_players, self.current_round)
+                state = agent.get_state(self.current_round)
 
-                # Filter available players to respect position caps
+                # Filter available players to respect position limits
                 valid_players = self.available_players[
                     self.available_players['position'].apply(
                         lambda pos: agent.position_counts[pos] < position_limits[pos]
@@ -112,7 +112,7 @@ class FantasyDraft:
 
                 self.available_players = self.available_players.drop(action)
 
-                next_state = agent.get_state(self.available_players, self.current_round + 1)
+                next_state = agent.get_state(self.current_round + 1)
                 agent.update_q_table(state, action, reward, next_state, self.available_players)
 
             self.current_round += 1  # Move to next round after all teams have picked.
@@ -139,7 +139,7 @@ class FantasyDraft:
             for team in self.draft_order:
                 agent = self.agents[team]
                 agent.epsilon, agent.epsilon_min = 0, 0
-                state = agent.get_state(self.available_players, self.current_round)
+                state = agent.get_state(self.current_round)
 
                 # Filter available players to respect position caps
                 valid_players = self.available_players[
@@ -162,7 +162,7 @@ class FantasyDraft:
 
                 self.available_players = self.available_players.drop(action)
 
-                next_state = agent.get_state(self.available_players, self.current_round + 1)
+                next_state = agent.get_state(self.current_round + 1)
                 agent.update_q_table(state, action, reward, next_state, self.available_players)
 
             self.current_round += 1  # Move to next round after all teams have picked.
@@ -187,27 +187,27 @@ class FantasyDraft:
 
 
 # Debug draft environment
-# player_data = pd.DataFrame({
-#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-# })
+player_data = pd.DataFrame({
+    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+})
 
 # Player data provided by FantasyPros.com.
-player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 12
-num_rounds = 20
-position_limits = {"QB": 3, "RB": 6, "WR": 8, "TE": 3}
+num_teams = 5
+num_rounds = 4
+position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-# Debug Training
-draft_simulator.train(1000, verbose=True)
-draft_simulator.plot_results()
+# # Debug Training
+# draft_simulator.train(1000, verbose=False)
+# draft_simulator.plot_results()
 # draft_simulator.run_draft()
 
 def experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes):
@@ -240,7 +240,7 @@ def experiment_with_parameters(draft_simulator, learning_rates, discount_factors
     return pd.DataFrame(results).sort_values(by="average_reward", ascending=False)
 
 
-# learning_rates = [0.25]
+# learning_rates = [0.1, 0.2, 0.3]
 # discount_factors = [0.5, 0.7, 0.9]
 # num_episodes = 1000
 #
@@ -281,9 +281,9 @@ def experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_value
     return pd.DataFrame(results).sort_values(by="average_reward", ascending=False)
 
 
-# epsilon_values = [1.0, 0.5, 0.25, 0.1]
-# epsilon_decay_values = [0.99]
-# epsilon_min_values = [0.1]
+# epsilon_values = [1.0, 0.8]
+# epsilon_decay_values = [0.99, 0.995, 0.999]
+# epsilon_min_values = [0.1, 0.05, 0.01]
 # num_episodes = 1000
 #
 # epsilon_results_df = experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_values, epsilon_min_values, num_episodes)
