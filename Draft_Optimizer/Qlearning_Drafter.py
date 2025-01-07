@@ -14,7 +14,7 @@ from collections import defaultdict
 
 
 class QAgent:
-    def __init__(self, team_id, learning_rate=0.25, discount_factor=0.9, epsilon=1.0, epsilon_decay=0.99,
+    def __init__(self, team_id, learning_rate=0.25, discount_factor=0.9, epsilon=1.0, epsilon_decay=0.995,
                  epsilon_min=0.01):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
@@ -102,7 +102,9 @@ class FantasyDraft:
                 drafted_player = self.available_players.loc[action]
                 agent.drafted_players.append(drafted_player["player_name"])
                 agent.position_counts[drafted_player["position"]] += 1  # Increment position count
-                reward = drafted_player["projected_points"]
+
+                # Compute reward for this action.
+                reward = self.get_reward(drafted_player)
                 agent.total_reward += reward
 
                 if verbose:
@@ -117,6 +119,17 @@ class FantasyDraft:
 
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
+
+    def get_reward(self, drafted_player):
+        """Calculate the reward attained for drafting a given player"""
+        proj_points = drafted_player["projected_points"]
+
+        # Get total value lost from not picking the best possible player.
+        max_points_by_position = self.available_players.groupby("position")["projected_points"].max()
+        loss_penalty = drafted_player["projected_points"] - max_points_by_position[drafted_player["position"]]
+
+        total_reward = proj_points + loss_penalty
+        return total_reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
@@ -169,7 +182,8 @@ class FantasyDraft:
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
 
         for agent in self.agents:
-            print( f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
+            print(
+                f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
 
     def plot_results(self):
         """Plot the learning progress for debug purposes."""
@@ -197,18 +211,20 @@ player_data = pd.DataFrame({
 })
 
 # Player data provided by FantasyPros.com.
+
+# Load in a Pandas dataFrame consisting of a full 400 player draft board.
 # player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 5
+num_teams = 2
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-# # Debug Training
-# draft_simulator.train(1000, verbose=False)
-# draft_simulator.plot_results()
-# draft_simulator.run_draft()
+# Debug Training
+draft_simulator.train(1000, verbose=True)
+draft_simulator.plot_results()
+
 
 def experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes):
     """Runs experiments for finding best performing learning rates and discount factors."""
@@ -247,7 +263,6 @@ def experiment_with_parameters(draft_simulator, learning_rates, discount_factors
 # learning_results_df = experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes)
 # print(learning_results_df)
 
-
 def experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_values, epsilon_min_values, num_episodes):
     """Runs experiments for finding the best epsilon values for the Epsilon-Greedy Policy."""
     results = []
@@ -279,7 +294,6 @@ def experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_value
                 draft_simulator.reset_draft()
 
     return pd.DataFrame(results).sort_values(by="average_reward", ascending=False)
-
 
 # epsilon_values = [1.0, 0.8]
 # epsilon_decay_values = [0.99, 0.995, 0.999]

@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import random
 import matplotlib.pyplot as plt
@@ -31,8 +30,8 @@ class QAgent:
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
 
-        self.q_network = QNetwork(state_size, action_size, hidden_size=action_size*1)
-        self.target_network = QNetwork(state_size, action_size, hidden_size=action_size*1)
+        self.q_network = QNetwork(state_size, action_size, hidden_size=action_size*2)
+        self.target_network = QNetwork(state_size, action_size, hidden_size=action_size*2)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()
 
@@ -145,13 +144,10 @@ class FantasyDraft:
                 drafted_player = self.available_players.loc[action]
                 agent.drafted_players.append(drafted_player["player_name"])
                 agent.position_counts[drafted_player["position"]] += 1  # Increment position count
-                reward = drafted_player["projected_points"]
-                agent.total_reward += reward
 
-                if verbose:
-                    # Debug log for individual action choices.
-                    print(f"Round {self.current_round} Team {agent.team_id}: Pick " + drafted_player["player_name"] +
-                          " " + drafted_player["position"] + f", Reward " + str(drafted_player["projected_points"]))
+                # Compute reward for this action.
+                reward = self.get_reward(drafted_player)
+                agent.total_reward += reward
 
                 self.available_players = self.available_players.drop(action)
 
@@ -160,6 +156,22 @@ class FantasyDraft:
 
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
+
+        if verbose:
+            for agent in self.agents:
+                print(
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
+
+    def get_reward(self, drafted_player):
+       """Calculate the reward attained for drafting a given player"""
+       proj_points = drafted_player["projected_points"]
+
+       # Get total value lost from not picking the best possible player.
+       max_points_by_position = self.available_players.groupby("position")["projected_points"].max()
+       loss_penalty = drafted_player["projected_points"] - max_points_by_position[drafted_player["position"]]
+
+       total_reward = proj_points + loss_penalty
+       return total_reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
@@ -196,27 +208,27 @@ class FantasyDraft:
         plt.show()
 
 # Debug draft environment
-# player_data = pd.DataFrame({
-#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-# })
+player_data = pd.DataFrame({
+    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+})
 
-player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 12
-num_rounds = 20
-position_limits = {"QB": 3, "RB": 6, "WR": 8, "TE": 3}
+num_teams = 2
+num_rounds = 4
+position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
 action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 
 # Debug Training
-draft_simulator.train(500, verbose=False)
+draft_simulator.train(1000, verbose=False)
 draft_simulator.plot_results()
 # Now run a draft with no exploration.
 for agent in draft_simulator.agents:
