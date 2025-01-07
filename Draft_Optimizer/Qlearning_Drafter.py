@@ -26,12 +26,14 @@ class QAgent:
         self.q_table = defaultdict(float)  # Q-table to store state-action values for this agent
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
+        self.total_points = 0  # Store total projected fantasy points for this agent.
         self.position_counts = {position: 0 for position in position_limits}  # Track drafted positions
 
     def reset_agent(self):
         """Reset the agent's state for a new episode."""
         self.drafted_players = []
         self.total_reward = 0
+        self.total_points = 0
         self.position_counts = {position: 0 for position in position_limits}
 
     def reset_q_table(self):
@@ -100,11 +102,12 @@ class FantasyDraft:
                 action = agent.choose_action(state, valid_players)
 
                 drafted_player = self.available_players.loc[action]
+                agent.total_points += drafted_player["projected_points"]
                 agent.drafted_players.append(drafted_player["player_name"])
                 agent.position_counts[drafted_player["position"]] += 1  # Increment position count
 
-                # Compute reward for this action.
-                reward = self.get_reward(drafted_player)
+                # Compute reward for this action and normalize.
+                reward = self.get_reward(drafted_player) / player_data["projected_points"].max()
                 agent.total_reward += reward
 
                 if verbose:
@@ -143,7 +146,7 @@ class FantasyDraft:
                 print(f"Episode {episode + 1}/{num_episodes} completed.")
                 for agent in self.agents:
                     print(
-                        f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
+                        f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
 
     def run_draft(self):
         """Run one full draft without any exploration."""
@@ -216,7 +219,7 @@ player_data = pd.DataFrame({
 # player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 2
+num_teams = 5
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
