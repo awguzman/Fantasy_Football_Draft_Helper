@@ -37,12 +37,14 @@ class QAgent:
 
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
+        self.total_points = 0  # Store the total fantasy points for this agent.
         self.position_counts = {position: 0 for position in position_limits}  # Track drafted positions
 
     def reset_agent(self):
         """Reset the agent's state for a new episode."""
         self.drafted_players = []
         self.total_reward = 0
+        self.total_points = 0
         self.position_counts = {position: 0 for position in position_limits}  # Reset position counts
 
     def get_state(self, round_number, all_agents):
@@ -59,7 +61,7 @@ class QAgent:
         other_teams_tensor = torch.tensor(other_teams_counts, dtype=torch.float32)
 
         # Combine into a single state tensor
-        return torch.cat((position_counts_tensor, round_tensor, other_teams_tensor))
+        return torch.cat((round_tensor, position_counts_tensor, other_teams_tensor))
 
     def choose_action(self, state, available_players):
         """Choose an action using an epsilon-greedy policy."""
@@ -99,6 +101,13 @@ class QAgent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        # Debug log to track Q-network updating.
+        print(f"Agent {self.team_id} updating Q-network:")
+        print(f"  Action: {action}, Reward: {reward}")
+        print(f"  Predicted Q-Value: {q_value}, Target Q-Value: {target_q_value}")
+        print(f"  Loss: {loss.item()}")
+
 
 class FantasyDraft:
     def __init__(self, player_data, num_teams, num_rounds, state_size, action_size):
@@ -142,11 +151,12 @@ class FantasyDraft:
                 action = agent.choose_action(state, valid_players)
 
                 drafted_player = self.available_players.loc[action]
+                agent.total_points += drafted_player["projected_points"]
                 agent.drafted_players.append(drafted_player["player_name"])
                 agent.position_counts[drafted_player["position"]] += 1  # Increment position count
 
-                # Compute reward for this action.
-                reward = self.get_reward(drafted_player)
+                # Compute reward for this action and normalize.
+                reward = self.get_reward(drafted_player) / player_data["projected_points"].max()
                 agent.total_reward += reward
 
                 self.available_players = self.available_players.drop(action)
@@ -160,7 +170,7 @@ class FantasyDraft:
         if verbose:
             for agent in self.agents:
                 print(
-                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)})")
 
     def get_reward(self, drafted_player):
        """Calculate the reward attained for drafting a given player"""
@@ -199,7 +209,7 @@ class FantasyDraft:
         plt.figure(figsize=(12, 6))
         for team_id, rewards in self.reward_history.items():
             # Compute a moving average for total rewards.
-            smoothed_rewards = pd.Series(rewards).rolling(window=10).mean()
+            smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
             plt.plot(smoothed_rewards, label=f"Team {team_id} Total Rewards")
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
@@ -220,7 +230,7 @@ player_data = pd.DataFrame({
 # player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-num_teams = 2
+num_teams = 5
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
@@ -228,7 +238,10 @@ action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 
 # Debug Training
-draft_simulator.train(1000, verbose=False)
+for i in range(1):
+    draft_simulator.train(num_episodes=1000, verbose=False)
+    for agent in draft_simulator.agents:
+        agent.epsilon = 1.0
 draft_simulator.plot_results()
 # Now run a draft with no exploration.
 for agent in draft_simulator.agents:
