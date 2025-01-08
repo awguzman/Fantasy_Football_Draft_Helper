@@ -13,15 +13,15 @@ class QNetwork(nn.Module):
         self.fc1 = nn.Linear(state_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, action_size)
-    
+
     def forward(self, state):
         x = torch.relu(self.fc1(state))
         x = torch.relu(self.fc2(x))
         return self.fc3(x)
 
 class QAgent:
-    def __init__(self, team_id, state_size, action_size, learning_rate=0.001, discount_factor=0.9, epsilon=1.0,
-                 epsilon_decay=0.995, epsilon_min=0.01):
+    def __init__(self, team_id, state_size, action_size, learning_rate=0.0001, discount_factor=0.8, epsilon=1.0,
+                 epsilon_decay=0.995, epsilon_min=0.01, hidden_mult = 2):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.learning_rate = learning_rate
@@ -29,11 +29,12 @@ class QAgent:
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
+        self.hidden_mult = hidden_mult
 
-        self.q_network = QNetwork(state_size, action_size, hidden_size=action_size*2)
-        self.target_network = QNetwork(state_size, action_size, hidden_size=action_size*2)
+        self.q_network = QNetwork(state_size, action_size, hidden_size=action_size * hidden_mult)
+        self.target_network = QNetwork(state_size, action_size, hidden_size=action_size * hidden_mult)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.SmoothL1Loss()
 
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
@@ -62,6 +63,7 @@ class QAgent:
 
         # Combine into a single state tensor
         return torch.cat((round_tensor, position_counts_tensor, other_teams_tensor))
+        # return torch.cat((round_tensor, position_counts_tensor))
 
     def choose_action(self, state, available_players):
         """Choose an action using an epsilon-greedy policy."""
@@ -75,37 +77,46 @@ class QAgent:
                 q_values = self.q_network(state_tensor).squeeze(0)  # Get Q-values for all actions
 
                 # Mask out unavailable actions
-                q_values_masked = torch.full_like(q_values, float('-inf'))
+                q_values_masked = torch.full_like(q_values, -1000)
                 q_values_masked[available_indices] = q_values[available_indices]
 
                 return q_values_masked.argmax().item()
 
     def update_q_network(self, state, action, reward, next_state, done):
-        """Update the Q-network using the Q-learning formula."""
-        state_tensor = state.unsqueeze(0)
-        next_state_tensor = next_state.unsqueeze(0)
-        action_tensor = torch.tensor([action], dtype=torch.long)
-        reward_tensor = torch.tensor([reward], dtype=torch.float32)
-        done_tensor = torch.tensor([done], dtype=torch.float32)
+        """Update the Q-network using Double Q-Learning."""
+        state_tensor = state.unsqueeze(0)  # Add batch dimension
+        next_state_tensor = next_state.unsqueeze(0)  # Add batch dimension
+        action_tensor = torch.tensor([action], dtype=torch.long)  # Action index
+        reward_tensor = torch.tensor([reward], dtype=torch.float32)  # Reward
+        done_tensor = torch.tensor([done], dtype=torch.float32)  # Done flag
 
         # Compute current Q-value
         q_value = self.q_network(state_tensor).gather(1, action_tensor.unsqueeze(1))
 
-        # Compute target Q-value
+        # Compute target Q-value using Double Q-Learning
         with torch.no_grad():
-            next_q_value = self.target_network(next_state_tensor).max(1)[0]
+            best_action = self.q_network(next_state_tensor).argmax(dim=1)
+            next_q_value = self.target_network(next_state_tensor).gather(1, best_action.unsqueeze(1)).squeeze(1)
             target_q_value = reward_tensor + (1 - done_tensor) * self.discount_factor * next_q_value
 
-        # Compute loss and update Q-network
+        # Compute loss
         loss = self.loss_fn(q_value, target_q_value.unsqueeze(1))
+
+        # Backpropagation
         self.optimizer.zero_grad()
         loss.backward()
+
+        # Debug norm log
+        total_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
+
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)  # Gradient clipping
         self.optimizer.step()
 
         # Debug log to track Q-network updating.
         print(f"Agent {self.team_id} updating Q-network:")
+        print(f"Total gradient norm: {total_norm}")
         print(f"  Action: {action}, Reward: {reward}")
-        print(f"  Predicted Q-Value: {q_value}, Target Q-Value: {target_q_value}")
+        print(f"  Predicted Q-Value: {q_value.item()}, Target Q-Value: {target_q_value.item()}")
         print(f"  Loss: {loss.item()}")
 
 
@@ -119,6 +130,7 @@ class FantasyDraft:
         self.reset_draft()
         self.reward_history = {i: [] for i in range(num_teams)}  # Track rewards for debug purposes.
         self.draft_order = list(range(num_teams))
+        self.max_projected_points = player_data["projected_points"].max()  # Cache the max projected points for normalization of rewards.
 
     def reset_draft(self):
         """Reset the draft for a new episode."""
@@ -156,7 +168,7 @@ class FantasyDraft:
                 agent.position_counts[drafted_player["position"]] += 1  # Increment position count
 
                 # Compute reward for this action and normalize.
-                reward = self.get_reward(drafted_player) / player_data["projected_points"].max()
+                reward = self.get_reward(drafted_player) / self.max_projected_points
                 agent.total_reward += reward
 
                 self.available_players = self.available_players.drop(action)
@@ -170,7 +182,7 @@ class FantasyDraft:
         if verbose:
             for agent in self.agents:
                 print(
-                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)})")
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts.)")
 
     def get_reward(self, drafted_player):
        """Calculate the reward attained for drafting a given player"""
@@ -197,8 +209,8 @@ class FantasyDraft:
                     agent.target_network.load_state_dict(agent.q_network.state_dict())
 
             # Print episode summary
-            print(f"Episode {episode + 1}/{num_episodes} completed.")
             if verbose:
+                print(f"Episode {episode + 1}/{num_episodes} completed.")
                 for agent in self.agents:
                     print(
                         f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
@@ -227,23 +239,39 @@ player_data = pd.DataFrame({
                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
 })
 
+
+# Pandas database of 400 player draft board from FantasyPros.com
 # player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
+# Setup draft environment.
 num_teams = 5
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
+# state_size = len(position_limits) + 1  # position_counts + round_number
+
 action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 
-# Debug Training
-for i in range(1):
-    draft_simulator.train(num_episodes=1000, verbose=False)
+# Setup training routine.
+epsilons = [1.0, 0.5, 0.3, 0.2, 0]
+epsilon_mins = [0.5, 0.1, 0.05, 0.01, 0]
+epsilon_decays = [0.9995, 0.9975, 0.995, 0.99, 0]
+num_episodes = [2000, 1000, 600, 400, 200]
+
+# Run agents through the training routine.
+for phase in range(len(num_episodes)):
     for agent in draft_simulator.agents:
-        agent.epsilon = 1.0
+        agent.epsilon = epsilons[phase]
+        agent.epsilon_min = epsilon_mins[phase]
+        agent.epsilon_decay = epsilon_decays[phase]
+    print(f"Beginning training phase {phase + 1}...")
+    draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
+    print(f"Phase {phase + 1} complete.\n")
+
+# Plot rewards and epsilons for debug purposes.
 draft_simulator.plot_results()
-# Now run a draft with no exploration.
-for agent in draft_simulator.agents:
-    agent.epsilon = 0
+
+# Run a singe episode after training to get final results.
 draft_simulator.run_episode(verbose=True)
