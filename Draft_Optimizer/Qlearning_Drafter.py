@@ -6,7 +6,6 @@ This is very much a work in progress with this being the first practice step in 
 algorithms.
 """
 
-import numpy as np
 import pandas as pd
 import random
 import matplotlib.pyplot as plt
@@ -35,10 +34,6 @@ class QAgent:
         self.total_reward = 0
         self.total_points = 0
         self.position_counts = {position: 0 for position in position_limits}
-
-    def reset_q_table(self):
-        """Reset the Q-table. Used for experimenting with different parameters"""
-        self.q_table = defaultdict(float)
 
     def get_state(self, round_number):
         """Get the current state representation for the agent."""
@@ -150,54 +145,20 @@ class FantasyDraft:
                     print(
                         f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
 
-    def run_draft(self):
-        """Run one full draft without any exploration."""
-        self.reset_draft()
-        while self.current_round < self.num_rounds:
-            for team in self.draft_order:
-                agent = self.agents[team]
-                agent.epsilon, agent.epsilon_min = 0, 0
-                state = agent.get_state(self.current_round)
-
-                # Filter available players to respect position caps
-                valid_players = self.available_players[
-                    self.available_players['position'].apply(
-                        lambda pos: agent.position_counts[pos] < position_limits[pos]
-                    )
-                ]
-
-                # Check if there are any draftable players.
-                if valid_players.empty:
-                    raise Exception("There are no valid players for the agent to draft from!")
-
-                action = agent.choose_action(state, valid_players)
-
-                drafted_player = self.available_players.loc[action]
-                agent.drafted_players.append(drafted_player["player_name"])
-                agent.position_counts[drafted_player["position"]] += 1  # Increment position count
-                reward = drafted_player["projected_points"]
-                agent.total_reward += reward
-
-                self.available_players = self.available_players.drop(action)
-
-                next_state = agent.get_state(self.current_round + 1)
-                agent.update_q_table(state, action, reward, next_state, self.available_players)
-
-            self.current_round += 1  # Move to next round after all teams have picked.
-            self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
-
-        for agent in self.agents:
-            print(
-                f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
-
-    def plot_results(self):
+    def plot_rewards(self):
         """Plot the learning progress for debug purposes."""
         # Plot total rewards
         plt.figure(figsize=(12, 6))
         for team_id, rewards in self.reward_history.items():
             # Compute a moving average for total rewards.
             smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
-            plt.plot(smoothed_rewards, label=f"Team {team_id} Total Rewards")
+            plt.plot(smoothed_rewards, label=f"Team {team_id + 1} Total Rewards")
+
+        # Overlay vertical lines to represent the start of each phase
+        phase_starts = [sum(num_episodes[:i]) for i in range(1, len(num_episodes))]
+        for start in phase_starts:
+            plt.axvline(x=start, color='grey', linestyle='--')
+
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
         plt.ylabel("Total Reward (Moving Average)")
@@ -217,81 +178,47 @@ class FantasyDraft:
 
 
 # Debug draft environment
-# player_data = pd.DataFrame({
-#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-# })
+player_data = pd.DataFrame({
+    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+})
 
 # Pandas database of 400 player draft board from FantasyPros.com
-player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft environment.
-num_teams = 12
-num_rounds = 20
-position_limits = {"QB": 3, "RB": 6, "WR": 8, "TE": 3}
+num_teams = 1
+num_rounds = 4
+position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
 # Setup training routine.
-epsilons = [1.0, 0.5, 0.3, 0.2, 0]
-epsilon_mins = [0.5, 0.1, 0.05, 0.01, 0]
-epsilon_decays = [0.9995, 0.9975, 0.995, 0.99, 0]
-num_episodes = [2000, 1000, 600, 400, 200]
+epsilons = [1.0, 0.5, 0.3, 0.2]
+epsilon_mins = [0.5, 0.1, 0.05, 0]
+epsilon_decays = [0.99965, 0.9985, 0.9975, 0.99]
+num_episodes = [2000, 1500, 1000, 500]
 
-# Run agents through the training routine.
+# Run agents through an incremented training routine.
 for phase in range(len(num_episodes)):
     for agent in draft_simulator.agents:
         agent.epsilon = epsilons[phase]
         agent.epsilon_min = epsilon_mins[phase]
         agent.epsilon_decay = epsilon_decays[phase]
-    print(f"\nBeginning training phase {phase + 1}...")
+
+    print(f"Beginning training phase {phase + 1}...")
     draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
-    print(f"Training phase {phase + 1} complete!")
+    print(f"Training phase {phase + 1} complete!\n")
 
 # Plot rewards and epsilons for debug purposes.
-draft_simulator.plot_results()
+draft_simulator.plot_rewards()
 draft_simulator.plot_epsilon()
 
-# Run a singe episode after training to get final results.
+# Run a singe episode after training with no exploration to get final results.
+for agent in draft_simulator.agents:
+    agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
 draft_simulator.run_episode(verbose=True)
-
-def experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes):
-    """Runs experiments for finding best performing learning rates and discount factors."""
-    results = []
-    print(f" Beginning learning parameter experiments. We are testing the following parameters:"
-          f"\nLearning rates: {learning_rates}"
-          f"\nDiscount factors: {discount_factors}"
-          f"\nEpisodes per training session: {num_episodes}")
-    for rates in learning_rates:
-        for factor in discount_factors:
-            # Update agents with new parameters and reset their Q-tables.
-            for agent in draft_simulator.agents:
-                agent.learning_rate = rates
-                agent.discount_factor = factor
-                agent.reset_q_table()
-
-            # Train and collect results
-            draft_simulator.train(num_episodes, verbose=False)
-            avg_rewards = [np.mean(rewards) for rewards in draft_simulator.reward_history.values()]
-            results.append({"learning_rate": rates,
-                            "discount_factor": factor,
-                            "average_reward": np.mean(avg_rewards)
-                            })
-            print(f"Experiment complete for learning rate {rates} and discount factor {factor}")
-
-            # Reset simulator
-            draft_simulator.reset_draft()
-
-    return pd.DataFrame(results).sort_values(by="average_reward", ascending=False)
-
-
-# learning_rates = [0.1, 0.2, 0.3]
-# discount_factors = [0.5, 0.7, 0.9]
-# num_episodes = 1000
-#
-# learning_results_df = experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes)
-# print(learning_results_df)

@@ -107,17 +107,17 @@ class QAgent:
         loss.backward()
 
         # Debug norm log
-        total_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
+        # total_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
 
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)  # Gradient clipping
         self.optimizer.step()
 
         # Debug log to track Q-network updating.
-        print(f"Agent {self.team_id} updating Q-network:")
-        print(f"Total gradient norm: {total_norm}")
-        print(f"  Action: {action}, Reward: {reward}")
-        print(f"  Predicted Q-Value: {q_value.item()}, Target Q-Value: {target_q_value.item()}")
-        print(f"  Loss: {loss.item()}")
+        # print(f"Agent {self.team_id} updating Q-network:")
+        # print(f"Total gradient norm: {total_norm}")
+        # print(f"  Action: {action}, Reward: {reward}")
+        # print(f"  Predicted Q-Value: {q_value.item()}, Target Q-Value: {target_q_value.item()}")
+        # print(f"  Loss: {loss.item()}")
 
 
 class FantasyDraft:
@@ -222,7 +222,13 @@ class FantasyDraft:
         for team_id, rewards in self.reward_history.items():
             # Compute a moving average for total rewards.
             smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
-            plt.plot(smoothed_rewards, label=f"Team {team_id} Total Rewards")
+            plt.plot(smoothed_rewards, label=f"Team {team_id + 1} Total Rewards")
+
+        # Overlay vertical lines to represent the start of each phase
+        phase_starts = [sum(num_episodes[:i]) for i in range(1, len(num_episodes))]
+        for start in phase_starts:
+            plt.axvline(x=start, color='grey', linestyle='--')
+
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
         plt.ylabel("Total Reward (Moving Average)")
@@ -245,7 +251,7 @@ player_data = pd.DataFrame({
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft environment.
-num_teams = 5
+num_teams = 1
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
@@ -255,10 +261,10 @@ action_size = len(player_data)
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size)
 
 # Setup training routine.
-epsilons = [1.0, 0.5, 0.3, 0.2, 0]
-epsilon_mins = [0.5, 0.1, 0.05, 0.01, 0]
-epsilon_decays = [0.9995, 0.9975, 0.995, 0.99, 0]
-num_episodes = [2000, 1000, 600, 400, 200]
+epsilons = [1.0, 0.5, 0.3, 0.2]
+epsilon_mins = [0.5, 0.1, 0.05, 0]
+epsilon_decays = [0.99965, 0.9985, 0.9975, 0.99]
+num_episodes = [2000, 1500, 1000, 500]
 
 # Run agents through the training routine.
 for phase in range(len(num_episodes)):
@@ -266,12 +272,15 @@ for phase in range(len(num_episodes)):
         agent.epsilon = epsilons[phase]
         agent.epsilon_min = epsilon_mins[phase]
         agent.epsilon_decay = epsilon_decays[phase]
+
     print(f"Beginning training phase {phase + 1}...")
     draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
     print(f"Phase {phase + 1} complete.\n")
 
-# Plot rewards and epsilons for debug purposes.
+# Plot rewards for debug purposes.
 draft_simulator.plot_results()
 
 # Run a singe episode after training to get final results.
+for agent in draft_simulator.agents:
+    agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
 draft_simulator.run_episode(verbose=True)
