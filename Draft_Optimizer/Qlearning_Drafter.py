@@ -69,6 +69,7 @@ class FantasyDraft:
         self.agents = [QAgent(team_id=i) for i in range(num_teams)]  # Initialize an agent for each team.
         self.reset_draft()
         self.reward_history = {i: [] for i in range(num_teams)}  # Track rewards for debug purposes.
+        self.epsilon_history = {i: [] for i in range(self.num_teams)}  # Track epsilon for each agent
         self.draft_order = list(range(num_teams))
 
     def reset_draft(self):
@@ -110,11 +111,6 @@ class FantasyDraft:
                 reward = self.get_reward(drafted_player) / player_data["projected_points"].max()
                 agent.total_reward += reward
 
-                if verbose:
-                    # Debug log for individual action choices.
-                    print(f"Round {self.current_round} Team {agent.team_id}: Pick " + drafted_player["player_name"] +
-                          " " + drafted_player["position"] + f", Reward " + str(drafted_player["projected_points"]))
-
                 self.available_players = self.available_players.drop(action)
 
                 next_state = agent.get_state(self.current_round + 1)
@@ -122,6 +118,11 @@ class FantasyDraft:
 
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
+
+        if verbose:
+            for agent in self.agents:
+                print(
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
 
     def get_reward(self, drafted_player):
         """Calculate the reward attained for drafting a given player"""
@@ -140,6 +141,7 @@ class FantasyDraft:
             self.run_episode(verbose=False)
             for agent in self.agents:
                 agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)  # decay epsilon value.
+                self.epsilon_history[agent.team_id].append(agent.epsilon)  # Log epsilon values
                 self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
             # Print episode summary
             if verbose:
@@ -202,32 +204,60 @@ class FantasyDraft:
         plt.legend()
         plt.show()
 
+    def plot_epsilon(self):
+        """Plot the epsilon values over episodes for debug purposes."""
+        plt.figure(figsize=(12, 6))
+        for team_id, epsilons in self.epsilon_history.items():
+            plt.plot(epsilons, label=f"Team {team_id} Epsilon")
+        plt.title("Epsilon Decay Over Episodes")
+        plt.xlabel("Episode")
+        plt.ylabel("Epsilon")
+        plt.legend()
+        plt.show()
+
 
 # Debug draft environment
-player_data = pd.DataFrame({
-    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-})
+# player_data = pd.DataFrame({
+#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+# })
 
-# Player data provided by FantasyPros.com.
+# Pandas database of 400 player draft board from FantasyPros.com
+player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-# Load in a Pandas dataFrame consisting of a full 400 player draft board.
-# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
-
-num_teams = 5
-num_rounds = 4
-position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
+# Setup draft environment.
+num_teams = 12
+num_rounds = 20
+position_limits = {"QB": 3, "RB": 6, "WR": 8, "TE": 3}
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-# Debug Training
-draft_simulator.train(1000, verbose=True)
-draft_simulator.plot_results()
+# Setup training routine.
+epsilons = [1.0, 0.5, 0.3, 0.2, 0]
+epsilon_mins = [0.5, 0.1, 0.05, 0.01, 0]
+epsilon_decays = [0.9995, 0.9975, 0.995, 0.99, 0]
+num_episodes = [2000, 1000, 600, 400, 200]
 
+# Run agents through the training routine.
+for phase in range(len(num_episodes)):
+    for agent in draft_simulator.agents:
+        agent.epsilon = epsilons[phase]
+        agent.epsilon_min = epsilon_mins[phase]
+        agent.epsilon_decay = epsilon_decays[phase]
+    print(f"\nBeginning training phase {phase + 1}...")
+    draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
+    print(f"Training phase {phase + 1} complete!")
+
+# Plot rewards and epsilons for debug purposes.
+draft_simulator.plot_results()
+draft_simulator.plot_epsilon()
+
+# Run a singe episode after training to get final results.
+draft_simulator.run_episode(verbose=True)
 
 def experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes):
     """Runs experiments for finding best performing learning rates and discount factors."""
@@ -265,43 +295,3 @@ def experiment_with_parameters(draft_simulator, learning_rates, discount_factors
 #
 # learning_results_df = experiment_with_parameters(draft_simulator, learning_rates, discount_factors, num_episodes)
 # print(learning_results_df)
-
-def experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_values, epsilon_min_values, num_episodes):
-    """Runs experiments for finding the best epsilon values for the Epsilon-Greedy Policy."""
-    results = []
-    print(f"Beginning epsilon value experiments. We are testing the following values:"
-          f"\nEpsilon values: {epsilon_values}"
-          f"\nEpsilon decay values: {epsilon_decay_values}"
-          f"\nMinimum epsilon values: {epsilon_min_values}"
-          f"\nEpisodes per training session: {num_episodes} ")
-    for epsilon in epsilon_values:
-        for epsilon_decay in epsilon_decay_values:
-            for epsilon_min in epsilon_min_values:
-                for agent in draft_simulator.agents:
-                    agent.epsilon = epsilon
-                    agent.epsilon_decay = epsilon_decay
-                    agent.epsilon_min = epsilon_min
-                    agent.reset_q_table()
-
-                draft_simulator.train(num_episodes, verbose=False)
-                avg_rewards = [np.mean(rewards) for rewards in draft_simulator.reward_history.values()]
-                results.append({
-                    "epsilon": epsilon,
-                    "epsilon_decay": epsilon_decay,
-                    "epsilon_min": epsilon_min,
-                    "average_reward": np.mean(avg_rewards)
-                })
-                print(f"Experiment complete for epsilon {epsilon}, decay {epsilon_decay} and minimum {epsilon_min}")
-
-                # Reset simulator
-                draft_simulator.reset_draft()
-
-    return pd.DataFrame(results).sort_values(by="average_reward", ascending=False)
-
-# epsilon_values = [1.0, 0.8]
-# epsilon_decay_values = [0.99, 0.995, 0.999]
-# epsilon_min_values = [0.1, 0.05, 0.01]
-# num_episodes = 1000
-#
-# epsilon_results_df = experiment_with_epsilon(draft_simulator, epsilon_values, epsilon_decay_values, epsilon_min_values, num_episodes)
-# print(epsilon_results_df)
