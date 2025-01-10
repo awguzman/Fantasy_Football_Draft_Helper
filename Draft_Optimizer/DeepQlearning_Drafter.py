@@ -16,6 +16,11 @@ class QNetwork(nn.Module):
     """Define neural network used to predict our Q-values."""
     def __init__(self, state_size, action_size, hidden_sizes):
         super(QNetwork, self).__init__()
+        self.network = self.create_layers(state_size, action_size, hidden_sizes)
+
+    @staticmethod
+    def create_layers(state_size, action_size, hidden_sizes):
+        """Helper method to create layers for the QNetwork."""
         layers = []
         input_size = state_size
         for hidden_size in hidden_sizes:
@@ -23,14 +28,15 @@ class QNetwork(nn.Module):
             layers.append(nn.ReLU())
             input_size = hidden_size
         layers.append(nn.Linear(input_size, action_size))
-        self.network = nn.Sequential(*layers)
+        return nn.Sequential(*layers)
 
     def forward(self, state):
         return self.network(state)
 
+
 class QAgent:
-    def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, learning_rate=0.00001,
-                 discount_factor=0.8, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01):
+    def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, learning_rate=0.0001,
+                 discount_factor=0.8, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01, max_norm = 1.0):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.learning_rate = learning_rate
@@ -44,6 +50,7 @@ class QAgent:
         self.target_network = QNetwork(state_size, action_size, hidden_layers)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.SmoothL1Loss()
+        self.max_norm = max_norm
 
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
@@ -90,7 +97,7 @@ class QAgent:
 
                 return q_values_masked.argmax().item()
 
-    def update_q_network(self, state, action, reward, next_state, done):
+    def update_q_network(self, state, action, reward, next_state, done, q_verbose=False):
         """Update the Q-network using Double Q-Learning."""
         state_tensor = state.unsqueeze(0)  # Add batch dimension
         next_state_tensor = next_state.unsqueeze(0)  # Add batch dimension
@@ -114,18 +121,20 @@ class QAgent:
         self.optimizer.zero_grad()
         loss.backward()
 
-        # Debug norm log
-        # total_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
+        if q_verbose:
+            # Debug norm log
+            total_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
 
-        # torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)  # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=self.max_norm)  # Gradient clipping
         self.optimizer.step()
 
-        # Debug log to track Q-network updating.
-        # print(f"Agent {self.team_id} updating Q-network:")
-        # print(f"Total gradient norm: {total_norm}")
-        # print(f"  Action: {action}, Reward: {reward}")
-        # print(f"  Predicted Q-Value: {q_value.item()}, Target Q-Value: {target_q_value.item()}")
-        # print(f"  Loss: {loss.item()}")
+        if q_verbose:
+            # Debug log to track Q-network updating.
+            print(f"Agent {self.team_id + 1} updating Q-network:")
+            print(f"Total gradient norm: {total_norm}")
+            print(f"  Action: {action}, Reward: {reward}")
+            print(f"  Predicted Q-Value: {q_value.item()}, Target Q-Value: {target_q_value.item()}")
+            print(f"  Loss: {loss.item()}")
 
 
 class FantasyDraft:
@@ -150,7 +159,7 @@ class FantasyDraft:
         for agent in self.agents:
             agent.reset_agent()
 
-    def run_episode(self, verbose=False):
+    def run_episode(self, verbose=False, q_debug=False):
         """Run a single episode of the draft."""
         self.reset_draft()
         while self.current_round < self.num_rounds:
@@ -185,7 +194,11 @@ class FantasyDraft:
                 self.available_players = self.available_players.drop(action)
 
                 next_state = agent.get_state(self.current_round + 1, self.agents)
-                agent.update_q_network(state, action, reward, next_state, done=False)
+
+                if q_debug:
+                    agent.update_q_network(state, action, reward, next_state, done=False, q_verbose=True)
+                else:
+                    agent.update_q_network(state, action, reward, next_state, done=False)
 
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
@@ -193,7 +206,7 @@ class FantasyDraft:
         if verbose:
             for agent in self.agents:
                 print(
-                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts.)")
+                    f"  Team {agent.team_id + 1}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts.)")
 
     def get_reward(self, drafted_player):
        """Calculate the reward attained for drafting a given player"""
@@ -203,14 +216,14 @@ class FantasyDraft:
        max_points_by_position = self.available_players.groupby("position")["projected_points"].max()
        loss_penalty = drafted_player["projected_points"] - max_points_by_position[drafted_player["position"]]
 
-       total_reward = proj_points + (loss_penalty * 2)
+       total_reward = proj_points + (loss_penalty * 5)
        return total_reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
         target_update_frequency = 5
         for episode in range(num_episodes):
-            self.run_episode(verbose=False)
+            self.run_episode(verbose=False, q_debug=True if episode == num_episodes - 1 else False)
             for agent in self.agents:
                 agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)  # decay epsilon value.
                 self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
@@ -262,7 +275,7 @@ player_data = pd.DataFrame({
 #     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft environment.
-num_teams = 1
+num_teams = 5
 num_rounds = 4
 position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
 state_size = len(position_limits) + 1 + (len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
@@ -273,8 +286,10 @@ draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, a
 
 # Setup training routine.
 epsilons = [1.0, 0.5, 0.3, 0.2]
-epsilon_mins = [0.5, 0.1, 0.05, 0]
-epsilon_decays = [0.99965, 0.9985, 0.9975, 0.99]
+epsilon_mins = [0.5, 0.1, 0.05, 0.01]
+epsilon_decays = [0.99965, 0.9989, 0.9981, 0.9935]
+max_norms = [1.5, 1.25, 1.0, 0.5]  # Set the max_norm values for gradient clipping
+learning_rates = [1e-4, 5e-5, 1e-5, 1e-5]  # Define learning rates for each phase
 num_episodes = [2000, 1500, 1000, 500]
 
 # Run agents through the training routine.
@@ -283,8 +298,13 @@ for phase in range(len(num_episodes)):
         agent.epsilon = epsilons[phase]
         agent.epsilon_min = epsilon_mins[phase]
         agent.epsilon_decay = epsilon_decays[phase]
+        agent.max_norm = max_norms[phase]
+        agent.learning_rate = learning_rates[phase]
 
-    print(f"Beginning training phase {phase + 1}...")
+        # Reset the optimizer with a new learning rate
+        agent.optimizer = optim.Adam(agent.q_network.parameters(), lr=learning_rates[phase])
+
+    print(f"Beginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
     draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
     print(f"Phase {phase + 1} complete.\n")
 
