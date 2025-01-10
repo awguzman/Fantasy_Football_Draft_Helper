@@ -5,9 +5,9 @@ We primarily use the Python data science library Pandas to perform data analysis
 
 Planned additions/updates: 
 
-Multi-agent reinforcement learning algorithms for optimizing draft picks (DQL, PPO, A2C, etc.)
-Best-Ball live draft board using Sleeper.com API (Waiting for the offseason due to API particularities)
-Update Touchdown Regression files for 2025 season
+- Additional multi-agent reinforcement learning algorithms for optimizing draft picks (DQL, PPO, A2C, etc.)
+- Best-Ball live draft board using Sleeper.com API (Waiting for the offseason due to API particularities)
+- Update Touchdown Regression files for 2025 season (Waiting for nfl_data_py update)
 
 -------------------------------------------------------------------------------------------------------------------------------
 **Best Ball**
@@ -17,8 +17,8 @@ Contains three python scripts. Get_Sleeper_Player_Map.py should be run once a se
 **Draft_Optimizer**
 
 Contains a variety of increasingly complex multi-agent rienforcement learning algorithms which train on the real-world draft board data provided by Best_Ball_Live_Draft.py. Current status of implimentations:
-1. Tabular Q-Learning: Implimented, need to fine-tune.
-2. Deep Q-Learning: Implimented, not very smart...
+1. Tabular Q-Learning (MAQL): Implimented, need to fine-tune.
+2. Deep Q-Learning (MADQL): Implimented, not very smart...
 
 **Dynasty**
 
