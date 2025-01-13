@@ -36,40 +36,44 @@ class QNetwork(nn.Module):
 
 
 class QAgent:
+
     def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, learning_rate=0.0001,
                  discount_factor=0.8, temperature=1.0, temperature_min=0.1, temperature_decay=.999, max_norm=1.0):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
+        self.position_limits = position_limits
+
+        # Q-function hyperparameters
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
+
+        # Parameters for softmax exploration.
         self.temperature = temperature
         self.temperature_min = temperature_min
         self.temperature_decay = temperature_decay
-        self.position_limits = position_limits
 
+        # Initialize Q-networks used for approximating Q-values.
         self.q_network = QNetwork(state_size, action_size, hidden_layers)
         self.target_network = QNetwork(state_size, action_size, hidden_layers)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
-        self.loss_fn = nn.SmoothL1Loss()
-        self.max_norm = max_norm
+        self.loss_fn = nn.SmoothL1Loss()  # Huber loss.
+        self.max_norm = max_norm  # maximum gradient norm for gradient clipping.
 
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
-        self.total_points = 0  # Store the total fantasy points for this agent.
-        self.position_counts = {position: 0 for position in self.position_limits}  # Track drafted positions
+        self.total_points = 0  # Store the total accumulated fantasy points for this agent.
+        self.position_counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}  # Track drafted position counts
 
     def reset_agent(self):
-        """Reset the agent's state for a new episode."""
+        """Reset the agent's initial state for a new episode."""
         self.drafted_players = []
         self.total_reward = 0
         self.total_points = 0
-        self.position_counts = {position: 0 for position in self.position_limits}  # Reset position counts
+        self.position_counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}
 
-    def get_state(self, round_number, all_agents):
-        """Get the current state representation for the agent, including information about other teams."""
-        # Current agent's state
-        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32)
-        round_tensor = torch.tensor([round_number], dtype=torch.float32)
+    def get_state(self, all_agents):
+        """Get the current state for the agent. We keep track of the position counts for all teams in the draft."""
+        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32) # Current agent's state
 
         # Other teams' position counts
         other_teams_counts = []
@@ -79,31 +83,30 @@ class QAgent:
         other_teams_tensor = torch.tensor(other_teams_counts, dtype=torch.float32)
 
         # Combine into a single state tensor
-        return torch.cat((round_tensor, position_counts_tensor, other_teams_tensor))
+        return torch.cat((position_counts_tensor, other_teams_tensor))
 
-    def choose_action(self, state, available_players):
-        """Choose an action using an epsilon-greedy policy."""
-        state_tensor = state.unsqueeze(0)  # Add batch dimension
-        with torch.no_grad():
-            q_values = self.q_network(state_tensor).squeeze(0)
-            q_values_masked = torch.full_like(q_values, -float('inf'))
-            available_indices = available_players.index.tolist()
-            q_values_masked[available_indices] = q_values[available_indices]
-
-            probabilities = torch.softmax(q_values_masked / self.temperature, dim=0)
-            action = torch.multinomial(probabilities, 1).item()
+    def choose_action(self, state, exploit=False):
+        """Choose an action using a softmax exploration policy."""
+        state_tensor = state.unsqueeze(0)
+        if exploit:  # Choose the best action if we are in an exploitative episode.
+            action = self.q_network(state_tensor).argmax(dim=1)
+        else:  # Otherwise, use softmax exploration.
+            with torch.no_grad():
+                q_values = self.q_network(state_tensor).squeeze(0)
+                probabilities = torch.softmax(q_values / self.temperature, dim=0)
+                action = torch.multinomial(probabilities, 1).item()
         return action
 
     def update_q_network(self, state, action, reward, next_state, done, q_verbose=False):
         """Update the Q-network using Double Q-Learning."""
-        state_tensor = state.unsqueeze(0)  # Add batch dimension
-        next_state_tensor = next_state.unsqueeze(0)  # Add batch dimension
-        action_tensor = torch.tensor([action], dtype=torch.long)  # Action index
-        reward_tensor = torch.tensor([reward], dtype=torch.float32)  # Reward
-        done_tensor = torch.tensor([done], dtype=torch.float32)  # Done flag
+        # Assemble environmental tensors
+        state_tensor = state.unsqueeze(0)
+        next_state_tensor = next_state.unsqueeze(0)
+        action_tensor = torch.tensor([action], dtype=torch.long)
+        reward_tensor = torch.tensor([reward], dtype=torch.float32)
+        done_tensor = torch.tensor([done], dtype=torch.float32)
 
-        # Compute current Q-value
-        q_value = self.q_network(state_tensor).gather(1, action_tensor.unsqueeze(1))
+        q_value = self.q_network(state_tensor).gather(1, action_tensor.unsqueeze(1))  # Compute current Q-value
 
         # Compute target Q-value using Double Q-Learning
         with torch.no_grad():
@@ -111,23 +114,18 @@ class QAgent:
             next_q_value = self.target_network(next_state_tensor).gather(1, best_action.unsqueeze(1)).squeeze(1)
             target_q_value = reward_tensor + (1 - done_tensor) * self.discount_factor * next_q_value
 
-        # Compute loss
-        loss = self.loss_fn(q_value, target_q_value.unsqueeze(1))
+        loss = self.loss_fn(q_value, target_q_value.unsqueeze(1))  # Compute Huber loss.
 
-        # Backpropagation
+        # Backpropagation step
         self.optimizer.zero_grad()
         loss.backward()
-
-        if q_verbose:
-            # Debug norm log
+        if q_verbose:  # Debug gradient norm log
             total_norm = torch.norm(
                 torch.stack([torch.norm(p.grad) for p in self.q_network.parameters() if p.grad is not None]))
-
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=self.max_norm)  # Gradient clipping
         self.optimizer.step()
 
-        if q_verbose:
-            # Debug log to track Q-network updating.
+        if q_verbose:  # Debug log to track Q-network updating.
             print(f"Agent {self.team_id + 1} updating Q-network:")
             print(f"Total gradient norm: {total_norm}")
             print(f"  Action: {action}, Reward: {reward}")
@@ -136,18 +134,25 @@ class QAgent:
 
 
 class FantasyDraft:
+
     def __init__(self, player_data, num_teams, num_rounds, state_size, action_size, hidden_layers, position_limits):
         """ Initialize the multi-agent draft simulation. """
-        self.player_data = player_data  # Expects a pandas DataFrame.
+
+        self.player_data = player_data.sort_values(by="projected_points", ascending=False)  # Expects a pandas DataFrame.
         self.num_teams = num_teams
         self.num_rounds = num_rounds
+        self.draft_order = list(range(num_teams))
         self.position_limits = position_limits
         self.agents = [QAgent(team_id=i, state_size=state_size, action_size=action_size, hidden_layers=hidden_layers,
                               position_limits=position_limits) for i in range(num_teams)]
-        self.reset_draft()
-        self.reward_history = {i: [] for i in range(num_teams)}  # Track rewards for debug purposes.
-        self.temperature_history = {i: [] for i in range(self.num_teams)}  # Track temperatures for each agent
-        self.draft_order = list(range(num_teams))
+
+        # Track rewards and temperatures for debug purposes.
+        self.reward_history = {i: [] for i in range(num_teams)}
+        self.temperature_history = {i: [] for i in range(self.num_teams)}
+
+        self.max_points_by_position = player_data.groupby("position")["projected_points"].max()  # Cache max possible points by position for reward normalization.
+
+        self.reset_draft()  # Get the environment ready for training.
 
     def reset_draft(self):
         """Reset the draft for a new episode."""
@@ -158,40 +163,50 @@ class FantasyDraft:
         for agent in self.agents:
             agent.reset_agent()
 
-    def run_episode(self, verbose=False, q_debug=False):
+    def run_episode(self, verbose=False, q_debug=False, exploit=False):
         """Run a single episode of the draft."""
-        self.reset_draft()
+        self.reset_draft()  # Reset the draft environment for a new episode.
         while self.current_round < self.num_rounds:
             for team in self.draft_order:
                 agent = self.agents[team]
-                state = agent.get_state(self.current_round, self.agents)
+                state = agent.get_state(self.agents)
 
-                # Filter available players to respect position caps
-                valid_players = self.available_players[
-                    self.available_players['position'].apply(
-                        lambda pos: agent.position_counts[pos] < self.position_limits[pos]
-                    )
-                ]
+                # Have the agent choose a position to draft.
+                if exploit:
+                    action = agent.choose_action(state, exploit=True)
+                else:
+                    action = agent.choose_action(state)
+                position = list(self.position_limits.keys())[action]  # Get the action position.
 
-                # Check if there are any draftable players.
-                if valid_players.empty:
-                    raise Exception("There are no valid players for the agent to draft from!")
+                # Get the top player for the chosen position
+                available_players = self.available_players[self.available_players["position"] == position]
 
-                action = agent.choose_action(state, valid_players)
+                # If there are no available players at the action position, punish and lose turn.
+                if available_players.empty:
+                    reward = -1
+                    agent.total_reward += reward
+                    next_state = agent.get_state(self.agents)
+                    agent.update_q_network(state, action, reward, next_state, done=False)
+                    continue
 
-                drafted_player = self.available_players.loc[action]
+                drafted_player = available_players.iloc[0]  # Assumes draft board is sorted by projected_points.
+                drafted_player_index = drafted_player.name  # Get index of drafted player in original draft board.
+
+                # Update agent with the drafted players' information.
                 agent.total_points += drafted_player["projected_points"]
-                agent.drafted_players.append(drafted_player["player_name"])
-                agent.position_counts[drafted_player["position"]] += 1  # Increment position count
+                agent.drafted_players.append(drafted_player["player_name"] + " " + drafted_player["Rank"])
+                agent.position_counts[drafted_player["position"]] += 1
 
-                reward = self.get_reward(drafted_player)
+                # Compute the reward for this action.
+                reward = self.get_reward(drafted_player, agent)
                 agent.total_reward += reward
 
-                self.available_players = self.available_players.drop(action)
+                # Remove the drafted player from the list of available players.
+                self.available_players = self.available_players.drop(drafted_player_index)
 
-                next_state = agent.get_state(self.current_round + 1, self.agents)
+                next_state = agent.get_state(self.agents)
 
-                if q_debug:
+                if q_debug:  # Debug log for tracking Q-values.
                     agent.update_q_network(state, action, reward, next_state, done=False, q_verbose=True)
                 else:
                     agent.update_q_network(state, action, reward, next_state, done=False)
@@ -199,36 +214,35 @@ class FantasyDraft:
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
 
+        # Print episode summary
         if verbose:
+            sum_rewards, sum_points = 0, 0
             for agent in self.agents:
+                sum_rewards += agent.total_reward
+                sum_points += agent.total_points
                 print(
-                    f"  Team {agent.team_id + 1}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts.)")
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
+            avg_reward = sum_rewards / num_teams
+            avg_points = sum_points / num_teams
+            print(f"Average total reward = {avg_reward}, Average total fantasy points = {avg_points}")
 
-    def get_reward(self, drafted_player):
-        """Calculate the reward attained for drafting a given player and normalize"""
-        proj_points = drafted_player["projected_points"]
-
-        # Get total value lost from not picking the best possible player at that position.
-        max_points_by_position = self.available_players.groupby("position")["projected_points"].max()
-        loss_penalty = drafted_player["projected_points"] - max_points_by_position[drafted_player["position"]]
-
-        total_reward = proj_points + (loss_penalty * 5)  # reward = proj. points - lost value
-
-        # Normalize rewards by the best possible players points available.
-        max_projected_points = self.available_players["projected_points"].max()
-        normalized_reward = total_reward / max_projected_points
-
-        # Cap the negative reward.
-        if normalized_reward < -1:
-            normalized_reward = -1
-
-        return normalized_reward
+    def get_reward(self, drafted_player, agent):
+        """Calculate the reward attained for drafting a given player by normalizing it with respect to the maximum
+        possible points for that position. If we are exceeding position limits, give negative reward."""
+        reward = drafted_player["projected_points"] / self.max_points_by_position[drafted_player["position"]]
+        if agent.position_counts[drafted_player["position"]] > self.position_limits[drafted_player["position"]]:
+            over_draft_penalty = agent.position_counts[drafted_player["position"]] - self.position_limits[
+                drafted_player["position"]]  # Reward 2
+            if 0 in agent.position_counts.values():
+                over_draft_penalty += 1  # Reward 3
+            reward = -(over_draft_penalty * reward)
+        return reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
         target_update_frequency = 10
         for episode in range(num_episodes):
-            self.run_episode(verbose=False, q_debug=True if episode == num_episodes - 1 else False)
+            self.run_episode(verbose=False, q_debug=False)
             for agent in self.agents:
                 agent.temperature = max(agent.temperature * agent.temperature_decay,
                                         agent.temperature_min)  # decay temp value.
@@ -241,12 +255,9 @@ class FantasyDraft:
                 for agent in self.agents:
                     agent.target_network.load_state_dict(agent.q_network.state_dict())
 
-            # Print episode summary
+            # Print training status.
             if verbose:
                 print(f"Episode {episode + 1}/{num_episodes} completed.")
-                for agent in self.agents:
-                    print(
-                        f"  Team {agent.team_id + 1}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players}")
 
     def plot_results(self):
         """Plot the learning progress for debug purposes."""
@@ -295,14 +306,13 @@ player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unname
     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft parameters.
-num_teams = 2
-num_rounds = 4
-position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
+num_teams = 12
+num_rounds = 20
+position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
 
 # Setup neural network structure parameters.
-state_size = len(position_limits) + 1 + (
-            len(position_limits) * (num_teams - 1))  # position_counts + round_number + other_teams_position_counts
-action_size = len(player_data)
+state_size = len(position_limits) * num_teams   # position_counts + round_number + other_teams_position_counts
+action_size = len(position_limits)
 num_layers = 3  # Number of hidden layers.
 hidden_size = math.ceil(
     state_size * (2 / 3)) + action_size  # Dynamically increase hidden neuron number with both action and state sizes.
@@ -313,12 +323,12 @@ draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, a
                                position_limits)
 
 # Setup training routine.
-temperatures = [2.0, 1.5, 1.0]
-temperature_mins = [1.0, 0.5, 0]
-temperature_decays = [.9997, 0.99925, 0.995]
+temperatures = [3.0, 2.0, 1.0]
+temperature_mins = [1.0, 0.5, 0.5]
+temperature_decays = [0.9995, 0.99935, 0.99925]
 max_norms = [1.5, 1.0, 0.5]  # Set the max_norm values for gradient clipping
-learning_rates = [1e-5, 5e-6, 1e-6]  # Define learning rates for each phase
-num_episodes = [2500, 1500, 1000]
+learning_rates = [1e-3, 5e-4, 1e-4]  # Define learning rates for each phase
+num_episodes = [2000, 2000, 1000]
 
 # Run agents through the training routine.
 for phase in range(len(num_episodes)):
@@ -332,18 +342,11 @@ for phase in range(len(num_episodes)):
         # Reset the optimizer with the new learning rate
         agent.optimizer = optim.Adam(agent.q_network.parameters(), lr=learning_rates[phase])
 
-    print(f"Beginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
+    print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
     draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
-    print(f"Phase {phase + 1} complete.\n")
+    print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
+    draft_simulator.run_episode(verbose=True, exploit=True)
 
 # Plot rewards and temperatures for debug purposes.
 draft_simulator.plot_results()
-draft_simulator.plot_temperatures()
-
-# Run a number of purely exploitative episodes after training to get final results.
-num_test_drafts = 1
-for agent in draft_simulator.agents:
-    agent.epsilon, agent.temperature_decay, agent.temperature_min = 0, 0, 0
-for i in range(num_test_drafts):
-    print(f"Running exploitation test draft {i + 1} / {num_test_drafts}")
-    draft_simulator.run_episode(verbose=True)
+# draft_simulator.plot_temperatures()

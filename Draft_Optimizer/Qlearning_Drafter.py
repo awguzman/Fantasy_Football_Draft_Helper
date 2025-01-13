@@ -13,7 +13,7 @@ from collections import defaultdict
 
 
 class QAgent:
-    def __init__(self, team_id, learning_rate=0.25, discount_factor=0.9, epsilon=1.0, epsilon_decay=0.995,
+    def __init__(self, team_id, learning_rate=0.2, discount_factor=0.9, epsilon=1.0, epsilon_decay=0.995,
                  epsilon_min=0.01):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
@@ -26,29 +26,30 @@ class QAgent:
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
         self.total_points = 0  # Store total projected fantasy points for this agent.
-        self.position_counts = {position: 0 for position in position_limits}  # Track drafted positions
+        self.position_counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}  # Track drafted positions
 
     def reset_agent(self):
         """Reset the agent's state for a new episode."""
         self.drafted_players = []
         self.total_reward = 0
         self.total_points = 0
-        self.position_counts = {position: 0 for position in position_limits}
+        self.position_counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}  # Track drafted positions
 
-    def get_state(self, round_number):
+    def get_state(self):
         """Get the current state representation for the agent."""
-        return (tuple(sorted(self.position_counts)), round_number)
+        return tuple(sorted(self.position_counts.values()))
 
-    def choose_action(self, state, available_players):
+    def choose_action(self, state):
         """Choose an action using an epsilon-greedy policy."""
-        if random.random() < self.epsilon:  # With probability epsilon, choose a random action.
-            return random.choice(available_players.index.tolist())
-        else:  # Otherwise, choose the best action.
-            return max(available_players.index, key=lambda player: self.q_table[(state, player)])
+        if random.random() < self.epsilon:
+            return random.choice(list(self.position_counts.keys()))  # Random position
+        else:
+            return max(self.position_counts.keys(),
+                       key=lambda position: self.q_table[(state, position)])  # Best position
 
-    def update_q_table(self, state, action, reward, next_state, available_players):
+    def update_q_table(self, state, action, reward, next_state):
         """Update the Q-table using the Q-learning formula."""
-        best_next_action = max(available_players.index, key=lambda player: self.q_table[(next_state, player)],
+        best_next_action = max(self.position_counts.keys(), key=lambda position: self.q_table[(next_state, position)],
                                default=0)
         td_target = reward + self.discount_factor * self.q_table[(next_state, best_next_action)]
         td_delta = td_target - self.q_table[(state, action)]
@@ -56,16 +57,19 @@ class QAgent:
 
 
 class FantasyDraft:
-    def __init__(self, player_data, num_teams, num_rounds):
+    def __init__(self, player_data, num_teams, num_rounds, position_limits):
         """ Initialize the multi-agent draft simulation. """
-        self.player_data = player_data  # Expects a pandas DataFrame.
+        self.player_data = player_data.sort_values(by="projected_points", ascending=False)  # Expects a pandas DataFrame.
         self.num_teams = num_teams
         self.num_rounds = num_rounds
+        self.position_limits = position_limits
         self.agents = [QAgent(team_id=i) for i in range(num_teams)]  # Initialize an agent for each team.
-        self.reset_draft()
         self.reward_history = {i: [] for i in range(num_teams)}  # Track rewards for debug purposes.
-        self.epsilon_history = {i: [] for i in range(self.num_teams)}  # Track epsilon for each agent
+        self.epsilon_history = {i: [] for i in range(self.num_teams)}  # Track epsilon for each agent for debug purposes.
         self.draft_order = list(range(num_teams))
+        self.reset_draft()
+
+        self.max_points_by_position = player_data.groupby("position")["projected_points"].max()  # Cache max possible points by position for reward normalization.
 
     def reset_draft(self):
         """Reset the draft for a new episode."""
@@ -76,59 +80,72 @@ class FantasyDraft:
         for agent in self.agents:
             agent.reset_agent()
 
+
     def run_episode(self, verbose=False):
         """Run a single episode of the draft."""
         self.reset_draft()
         while self.current_round < self.num_rounds:
             for team in self.draft_order:
                 agent = self.agents[team]
-                state = agent.get_state(self.current_round)
+                state = agent.get_state()
 
-                # Filter available players to respect position limits
-                valid_players = self.available_players[
-                    self.available_players['position'].apply(
-                        lambda pos: agent.position_counts[pos] < position_limits[pos]
-                    )
-                ]
+                # Agent chooses a position to draft
+                position = agent.choose_action(state)
 
-                # Check if there are any draftable players.
-                if valid_players.empty:
-                    raise Exception("There are no valid players for the agent to draft from!")
+                # Get the top player for the chosen position
+                available_position_players = self.available_players[self.available_players["position"] == position]
 
-                action = agent.choose_action(state, valid_players)
+                # If there are no available players at the action position, punish and lose turn.
+                if available_position_players.empty:
+                    reward = -1
+                    agent.total_reward += reward
+                    next_state = state
+                    agent.update_q_table(state, position, reward, next_state)
+                    continue
 
-                drafted_player = self.available_players.loc[action]
+                drafted_player = available_position_players.iloc[0]  # Assumes draft board is sorted by projected_points
+                drafted_player_index = drafted_player.name
+
+                # Update agent stats
                 agent.total_points += drafted_player["projected_points"]
-                agent.drafted_players.append(drafted_player["player_name"])
-                agent.position_counts[drafted_player["position"]] += 1  # Increment position count
+                agent.drafted_players.append(drafted_player["player_name"] + " " + drafted_player["Rank"])
+                agent.position_counts[position] += 1
 
-                # Compute reward for this action and normalize.
-                reward = self.get_reward(drafted_player) / player_data["projected_points"].max()
+                reward = self.get_reward(drafted_player, agent)
                 agent.total_reward += reward
 
-                self.available_players = self.available_players.drop(action)
+                self.available_players = self.available_players.drop(drafted_player_index)
 
-                next_state = agent.get_state(self.current_round + 1)
-                agent.update_q_table(state, action, reward, next_state, self.available_players)
+                next_state = agent.get_state()
+                agent.update_q_table(state, position, reward, next_state)
 
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
 
+        # Print episode summary
         if verbose:
+            sum_rewards, sum_points = 0, 0
             for agent in self.agents:
+                sum_rewards += agent.total_reward
+                sum_points += agent.total_points
                 print(
                     f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
+            avg_reward = sum_rewards / num_teams
+            avg_points = sum_points / num_teams
+            print(f"Average total reward = {avg_reward}, Average total fantasy points = {avg_points}")
 
-    def get_reward(self, drafted_player):
-        """Calculate the reward attained for drafting a given player"""
-        proj_points = drafted_player["projected_points"]
 
-        # Get total value lost from not picking the best possible player.
-        max_points_by_position = self.available_players.groupby("position")["projected_points"].max()
-        loss_penalty = drafted_player["projected_points"] - max_points_by_position[drafted_player["position"]]
-
-        total_reward = proj_points + loss_penalty
-        return total_reward
+    def get_reward(self, drafted_player, agent):
+        """Calculate the reward attained for drafting a given player by normalizing it with respect to the maximum
+        possible points for that position. If we are exceeding position limits, give negative reward."""
+        reward = drafted_player["projected_points"] / self.max_points_by_position[drafted_player["position"]]
+        if agent.position_counts[drafted_player["position"]] > self.position_limits[drafted_player["position"]]:
+            over_draft_penalty = agent.position_counts[drafted_player["position"]] - self.position_limits[
+                drafted_player["position"]]  # Reward 2
+            if 0 in agent.position_counts.values():
+                over_draft_penalty += 1  # Reward 3
+            reward = -(over_draft_penalty * reward)
+        return reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
@@ -138,12 +155,10 @@ class FantasyDraft:
                 agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)  # decay epsilon value.
                 self.epsilon_history[agent.team_id].append(agent.epsilon)  # Log epsilon values
                 self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
-            # Print episode summary
+
+            # Print training status
             if verbose:
                 print(f"Episode {episode + 1}/{num_episodes} completed.")
-                for agent in self.agents:
-                    print(
-                        f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
 
     def plot_rewards(self):
         """Plot the learning progress for debug purposes."""
@@ -178,30 +193,30 @@ class FantasyDraft:
 
 
 # Debug draft environment
-player_data = pd.DataFrame({
-    "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-                    "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-    "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-                 "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-    "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-                         210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-})
+# player_data = pd.DataFrame({
+#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
+#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
+#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
+#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
+#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
+#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
+# })
 
 # Pandas database of 400 player draft board from FantasyPros.com
-# player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-#     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft environment.
-num_teams = 1
-num_rounds = 4
-position_limits = {"QB": 1, "RB": 1, "WR": 1, "TE": 1}
-draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
+num_teams = 12
+num_rounds = 20
+position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
+draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, position_limits)
 
 # Setup training routine.
-epsilons = [1.0, 0.5, 0.3, 0.2]
-epsilon_mins = [0.5, 0.1, 0.05, 0]
-epsilon_decays = [0.99965, 0.9985, 0.9975, 0.99]
-num_episodes = [2000, 1500, 1000, 500]
+epsilons = [1.0, 0.5, 0.25]
+epsilon_mins = [0.1, 0.05, 0]
+epsilon_decays = [0.9993, 0.9985, 0.99]
+num_episodes = [3000, 1500, 500]
 
 # Run agents through an incremented training routine.
 for phase in range(len(num_episodes)):
@@ -210,15 +225,13 @@ for phase in range(len(num_episodes)):
         agent.epsilon_min = epsilon_mins[phase]
         agent.epsilon_decay = epsilon_decays[phase]
 
-    print(f"Beginning training phase {phase + 1}...")
+    print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
     draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
-    print(f"Training phase {phase + 1} complete!\n")
+    print(f"Training phase {phase + 1} complete. Running a test draft with no exploitation.")
+    for agent in draft_simulator.agents:
+        agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
+    draft_simulator.run_episode(verbose=True)
 
 # Plot rewards and epsilons for debug purposes.
 draft_simulator.plot_rewards()
-draft_simulator.plot_epsilon()
-
-# Run a singe episode after training with no exploration to get final results.
-for agent in draft_simulator.agents:
-    agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
-draft_simulator.run_episode(verbose=True)
+# draft_simulator.plot_epsilon()
