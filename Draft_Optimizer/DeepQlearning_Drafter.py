@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Running neural network using {device}")
 
 class QNetwork(nn.Module):
     """Define neural network used to predict our Q-values."""
@@ -53,9 +55,9 @@ class QAgent:
         self.temperature_decay = temperature_decay
 
         # Initialize Q-networks used for approximating Q-values.
-        self.q_network = QNetwork(state_size, action_size, hidden_layers)
-        self.target_network = QNetwork(state_size, action_size, hidden_layers)
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
+        self.q_network = QNetwork(state_size, action_size, hidden_layers).to(device)
+        self.target_network = QNetwork(state_size, action_size, hidden_layers).to(device)
+        self.optimizer = optim.AdamW(self.q_network.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.SmoothL1Loss()  # Huber loss.
         self.max_norm = max_norm  # maximum gradient norm for gradient clipping.
 
@@ -73,14 +75,14 @@ class QAgent:
 
     def get_state(self, all_agents):
         """Get the current state for the agent. We keep track of the position counts for all teams in the draft."""
-        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32) # Current agent's state
+        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32).to(device) # Current agent's state
 
         # Other teams' position counts
         other_teams_counts = []
         for agent in all_agents:
             if agent.team_id != self.team_id:
                 other_teams_counts.extend(agent.position_counts.values())
-        other_teams_tensor = torch.tensor(other_teams_counts, dtype=torch.float32)
+        other_teams_tensor = torch.tensor(other_teams_counts, dtype=torch.float32).to(device)
 
         # Combine into a single state tensor
         return torch.cat((position_counts_tensor, other_teams_tensor))
@@ -100,11 +102,11 @@ class QAgent:
     def update_q_network(self, state, action, reward, next_state, done, q_verbose=False):
         """Update the Q-network using Double Q-Learning."""
         # Assemble environmental tensors
-        state_tensor = state.unsqueeze(0)
-        next_state_tensor = next_state.unsqueeze(0)
-        action_tensor = torch.tensor([action], dtype=torch.long)
-        reward_tensor = torch.tensor([reward], dtype=torch.float32)
-        done_tensor = torch.tensor([done], dtype=torch.float32)
+        state_tensor = state.unsqueeze(0).to(device)
+        next_state_tensor = next_state.unsqueeze(0).to(device)
+        action_tensor = torch.tensor([action], dtype=torch.long).to(device)
+        reward_tensor = torch.tensor([reward], dtype=torch.float32).to(device)
+        done_tensor = torch.tensor([done], dtype=torch.float32).to(device)
 
         q_value = self.q_network(state_tensor).gather(1, action_tensor.unsqueeze(1))  # Compute current Q-value
 
@@ -163,7 +165,7 @@ class FantasyDraft:
         for agent in self.agents:
             agent.reset_agent()
 
-    def run_episode(self, verbose=False, q_debug=False, exploit=False):
+    def run_episode(self, verbose=False, q_debug=True, exploit=False):
         """Run a single episode of the draft."""
         self.reset_draft()  # Reset the draft environment for a new episode.
         while self.current_round < self.num_rounds:
@@ -236,13 +238,15 @@ class FantasyDraft:
             if 0 in agent.position_counts.values():
                 over_draft_penalty += 1  # Reward 3
             reward = -(over_draft_penalty * reward)
+            if reward < -1:  # Reward 4
+                reward = -1
         return reward
 
     def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
         target_update_frequency = 10
         for episode in range(num_episodes):
-            self.run_episode(verbose=False, q_debug=False)
+            self.run_episode(verbose=False, q_debug=True if episode == (num_episodes - 1) else False)
             for agent in self.agents:
                 agent.temperature = max(agent.temperature * agent.temperature_decay,
                                         agent.temperature_min)  # decay temp value.
@@ -306,7 +310,7 @@ player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unname
     "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
 # Setup draft parameters.
-num_teams = 12
+num_teams = 1
 num_rounds = 20
 position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
 
@@ -324,10 +328,10 @@ draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, a
 
 # Setup training routine.
 temperatures = [3.0, 2.0, 1.0]
-temperature_mins = [1.0, 0.5, 0.5]
-temperature_decays = [0.9995, 0.99935, 0.99925]
-max_norms = [1.5, 1.0, 0.5]  # Set the max_norm values for gradient clipping
-learning_rates = [1e-3, 5e-4, 1e-4]  # Define learning rates for each phase
+temperature_mins = [1.0, 0.5, 0.1]
+temperature_decays = [0.9995, 0.99935, 0.9975]
+max_norms = [1.0, 0.75, 0.5]  # Set the max_norm values for gradient clipping
+learning_rates = [5e-3, 1e-4, 5e-4]  # Define learning rates for each phase
 num_episodes = [2000, 2000, 1000]
 
 # Run agents through the training routine.
@@ -340,13 +344,13 @@ for phase in range(len(num_episodes)):
         agent.learning_rate = learning_rates[phase]
 
         # Reset the optimizer with the new learning rate
-        agent.optimizer = optim.Adam(agent.q_network.parameters(), lr=learning_rates[phase])
+        agent.optimizer = optim.AdamW(agent.q_network.parameters(), lr=learning_rates[phase])
 
     print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
-    draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
+    draft_simulator.train(num_episodes=num_episodes[phase], verbose=True)
     print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
     draft_simulator.run_episode(verbose=True, exploit=True)
 
 # Plot rewards and temperatures for debug purposes.
 draft_simulator.plot_results()
-# draft_simulator.plot_temperatures()
+draft_simulator.plot_temperatures()
