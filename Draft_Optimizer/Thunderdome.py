@@ -84,6 +84,7 @@ class DeepQAgent:
 
 
 class FantasyDraft:
+
     def __init__(self, player_data, num_teams, num_rounds):
         """ Initialize the multi-agent draft simulation. """
         self.player_data = player_data.sort_values(by="projected_points", ascending=False)  # Expects a pandas DataFrame.
@@ -91,11 +92,14 @@ class FantasyDraft:
         self.num_rounds = num_rounds
         self.draft_order = list(range(num_teams))
 
+        # Preload all agents.
+        self.QAgents = [QAgent(team_id=i) for i in range(num_teams)]
+        self.DeepQAgents = [DeepQAgent(team_id=j) for j in range(num_teams)]
+
         # Track the number of wins by average points each type of agent gets.
         self.q_agent_wins = 0  #
         self.deep_q_agent_wins = 0
 
-        self.reset_draft()
 
     def reset_draft(self):
         """Reset the draft for a new draft."""
@@ -104,15 +108,16 @@ class FantasyDraft:
         self.current_team = 0
         self.draft_order = list(range(self.num_teams))  # Reset draft order
 
-        # Randomly but equally distribute and initialize the agents.
+        # Randomly but equally distribute a selection of the preloaded agents.
         draft_positions = list(range(num_teams))
         random.shuffle(draft_positions)
         self.q_agent_ids = draft_positions[: num_teams // 2]
         self.deep_q_agent_ids = draft_positions[num_teams // 2:]
-        self.agents = [QAgent(team_id=i) for i in self.q_agent_ids] + [DeepQAgent(team_id=j) for j in
+        self.agents = [self.QAgents[i] for i in self.q_agent_ids] + [self.DeepQAgents[j] for j in
                                                                        self.deep_q_agent_ids]
         self.agents.sort(key=lambda agent: agent.team_id)  # Reorder agents by increasing team_id
-
+        for agent in self.agents:
+            agent.reset_agent()
 
 
     def run_draft(self, verbose=False):
@@ -187,10 +192,7 @@ class FantasyDraft:
             else:
                 self.deep_q_agent_wins += 1
 
-            print(f"Evaluation Draft {draft + 1} / {num_drafts} complete.")
-
         print(f"Q-learning agents wins: {self.q_agent_wins} | Deep Q-learning agent wins: {self.deep_q_agent_wins}")
-
 
 
 # Pandas database of 400 player draft board from FantasyPros.com
@@ -201,7 +203,7 @@ num_rounds = 20
 
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-draft_simulator.run_evaluations(num_drafts=1000)
+draft_simulator.run_evaluations(num_drafts=10000)
 
 
 
