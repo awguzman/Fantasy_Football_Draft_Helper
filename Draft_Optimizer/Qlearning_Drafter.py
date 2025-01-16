@@ -8,6 +8,7 @@ algorithms.
 
 import pandas as pd
 import random
+import json
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
@@ -42,10 +43,10 @@ class QAgent:
     def choose_action(self, state):
         """Choose an action using an epsilon-greedy policy."""
         if random.random() < self.epsilon:
-            return random.choice(list(self.position_counts.keys()))  # Random position
+            return random.choice(list(self.position_counts.keys()))  # Random position with probability epsilon
         else:
             return max(self.position_counts.keys(),
-                       key=lambda position: self.q_table[(state, position)])  # Best position
+                       key=lambda position: self.q_table[(state, position)])  # Otherwise, best position
 
     def update_q_table(self, state, action, reward, next_state):
         """Update the Q-table using the Q-learning formula."""
@@ -129,9 +130,9 @@ class FantasyDraft:
                 sum_rewards += agent.total_reward
                 sum_points += agent.total_points
                 print(
-                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
-            avg_reward = sum_rewards / num_teams
-            avg_points = sum_points / num_teams
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Position Counts = {agent.position_counts}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
+            avg_reward = sum_rewards / self.num_teams
+            avg_points = sum_points / self.num_teams
             print(f"Average total reward = {avg_reward}, Average total fantasy points = {avg_points}")
 
 
@@ -145,6 +146,8 @@ class FantasyDraft:
             if 0 in agent.position_counts.values():
                 over_draft_penalty += 1  # Reward 3
             reward = -(over_draft_penalty * reward)
+            if reward < -1:  # Reward 4
+                reward = -1
         return reward
 
     def train(self, num_episodes, verbose=False):
@@ -153,7 +156,6 @@ class FantasyDraft:
             self.run_episode(verbose=False)
             for agent in self.agents:
                 agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)  # decay epsilon value.
-                self.epsilon_history[agent.team_id].append(agent.epsilon)  # Log epsilon values
                 self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
 
             # Print training status
@@ -169,69 +171,55 @@ class FantasyDraft:
             smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
             plt.plot(smoothed_rewards, label=f"Team {team_id + 1} Total Rewards")
 
-        # Overlay vertical lines to represent the start of each phase
-        phase_starts = [sum(num_episodes[:i]) for i in range(1, len(num_episodes))]
-        for start in phase_starts:
-            plt.axvline(x=start, color='grey', linestyle='--')
-
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
         plt.ylabel("Total Reward (Moving Average)")
         plt.legend()
         plt.show()
 
-    def plot_epsilon(self):
-        """Plot the epsilon values over episodes for debug purposes."""
-        plt.figure(figsize=(12, 6))
-        for team_id, epsilons in self.epsilon_history.items():
-            plt.plot(epsilons, label=f"Team {team_id} Epsilon")
-        plt.title("Epsilon Decay Over Episodes")
-        plt.xlabel("Episode")
-        plt.ylabel("Epsilon")
-        plt.legend()
-        plt.show()
+# Runs a full training routine.
+def run_training_routine():
+    # Pandas database of 400 player draft board from FantasyPros.com
+    player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+        "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
+    # Setup draft environment.
+    num_teams = 12
+    num_rounds = 20
+    position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
+    draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, position_limits)
 
-# Debug draft environment
-# player_data = pd.DataFrame({
-#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-# })
+    # Setup training routine.
+    epsilons = [1.0, 0.5, 0.25]
+    epsilon_mins = [0.1, 0.05, 0]
+    epsilon_decays = [0.9993, 0.9985, 0.99]
+    num_episodes = [3000, 1500, 500]
 
-# Pandas database of 400 player draft board from FantasyPros.com
-player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+    # Run agents through an incremented training routine.
+    for phase in range(len(num_episodes)):
+        for agent in draft_simulator.agents:
+            agent.epsilon = epsilons[phase]
+            agent.epsilon_min = epsilon_mins[phase]
+            agent.epsilon_decay = epsilon_decays[phase]
 
-# Setup draft environment.
-num_teams = 12
-num_rounds = 20
-position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
-draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, position_limits)
+        print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
+        draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
+        print(f"Training phase {phase + 1} complete. Running a test draft with no exploitation.")
+        for agent in draft_simulator.agents:
+            agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
+        draft_simulator.run_episode(verbose=True)
 
-# Setup training routine.
-epsilons = [1.0, 0.5, 0.25]
-epsilon_mins = [0.1, 0.05, 0]
-epsilon_decays = [0.9993, 0.9985, 0.99]
-num_episodes = [3000, 1500, 500]
+    # Plot rewards for evaluation.
+    draft_simulator.plot_rewards()
 
-# Run agents through an incremented training routine.
-for phase in range(len(num_episodes)):
+    # Save trained Q-tables as .json for competitive evaluation.
+    def save_q_table_to_json(q_table, filename):
+        # Convert defaultdict to a dictionary then to a .json
+        q_table = {str(k): v for k, v in q_table.items()}
+        with open(filename, 'w') as json_file:
+            json.dump(q_table, json_file, indent=4)
+
     for agent in draft_simulator.agents:
-        agent.epsilon = epsilons[phase]
-        agent.epsilon_min = epsilon_mins[phase]
-        agent.epsilon_decay = epsilon_decays[phase]
+        save_q_table_to_json(agent.q_table, filename=f"Trained_Agents/Q_Agents/QAgent_{agent.team_id}_Q_table.json")
 
-    print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
-    draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
-    print(f"Training phase {phase + 1} complete. Running a test draft with no exploitation.")
-    for agent in draft_simulator.agents:
-        agent.epsilon, agent.epsilon_decay, agent.epsilon_min = 0, 0, 0
-    draft_simulator.run_episode(verbose=True)
-
-# Plot rewards and epsilons for debug purposes.
-draft_simulator.plot_rewards()
-# draft_simulator.plot_epsilon()
+# run_training_routine()
