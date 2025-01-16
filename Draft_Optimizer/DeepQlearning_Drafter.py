@@ -24,16 +24,16 @@ warnings.filterwarnings(
 class QNetwork(nn.Module):
     """Define neural network used to predict our Q-values."""
 
-    def __init__(self, state_size, action_size, hidden_sizes):
+    def __init__(self, state_size, action_size, hidden_layers):
         super(QNetwork, self).__init__()
-        self.network = self.create_layers(state_size, action_size, hidden_sizes)
+        self.network = self.create_layers(state_size, action_size, hidden_layers)
 
     @staticmethod
-    def create_layers(state_size, action_size, hidden_sizes):
+    def create_layers(state_size, action_size, hidden_layers):
         """Helper method to create layers for the QNetwork."""
         layers = []
         input_size = state_size
-        for hidden_size in hidden_sizes:
+        for hidden_size in hidden_layers:
             layers.append(nn.Linear(input_size, hidden_size))
             layers.append(nn.ReLU())
             input_size = hidden_size
@@ -44,7 +44,7 @@ class QNetwork(nn.Module):
         return self.network(state)
 
 
-class QAgent:
+class DeepQAgent:
 
     def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, learning_rate=5e-3,
                  discount_factor=0.8, temperature=1.0, temperature_min=0.1, temperature_decay=.999, max_norm=1.0):
@@ -163,8 +163,8 @@ class FantasyDraft:
         self.num_rounds = num_rounds
         self.draft_order = list(range(num_teams))
         self.position_limits = position_limits
-        self.agents = [QAgent(team_id=i, state_size=state_size, action_size=action_size, hidden_layers=hidden_layers,
-                              position_limits=position_limits) for i in range(num_teams)]
+        self.agents = [DeepQAgent(team_id=i, state_size=state_size, action_size=action_size, hidden_layers=hidden_layers,
+                                  position_limits=position_limits) for i in range(num_teams)]
 
         # Setup replay buffer.
         self.batch_size = 240  # Batch a full draft of experiences.
@@ -240,9 +240,9 @@ class FantasyDraft:
                 sum_rewards += agent.total_reward
                 sum_points += agent.total_points
                 print(
-                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
-            avg_reward = sum_rewards / num_teams
-            avg_points = sum_points / num_teams
+                    f"  Team {agent.team_id}: Total Reward = {round(agent.total_reward, 2)}, Position Counts = {agent.position_counts}, Drafted Players = {agent.drafted_players} ({round(agent.total_points, 2)} pts)")
+            avg_reward = sum_rewards / self.num_teams
+            avg_points = sum_points / self.num_teams
             print(f"Average total reward = {avg_reward}, Average total fantasy points = {avg_points}")
 
     def get_reward(self, drafted_player, agent):
@@ -269,12 +269,9 @@ class FantasyDraft:
                     batch = self.replay_buffer.sample(self.batch_size)
                     agent.update_q_network(*batch)
 
-
                 agent.scheduler.step()  # Increment the step count on the learning rate scheduler.
                 agent.temperature = max(agent.temperature * agent.temperature_decay,
                                         agent.temperature_min)  # decay temp value.
-                self.temperature_history[agent.team_id].append(
-                    agent.temperature)  # Log temperature values for debug purposes.
                 self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
 
             # Update target networks periodically
@@ -293,81 +290,60 @@ class FantasyDraft:
             smoothed_rewards = pd.Series(rewards).rolling(window=50).mean()
             plt.plot(smoothed_rewards, label=f"Team {team_id + 1} Total Rewards")
 
-        # Overlay vertical lines to represent the start of each phase
-        phase_starts = [sum(num_episodes[:i]) for i in range(1, len(num_episodes))]
-        for start in phase_starts:
-            plt.axvline(x=start, color='grey', linestyle='--')
-
         plt.title("Total Rewards Over Episodes")
         plt.xlabel("Episode")
         plt.ylabel("Total Reward (Moving Average)")
         plt.legend()
         plt.show()
 
-    def plot_temperatures(self):
-        """Plot the temperature values over episodes for debug purposes."""
-        plt.figure(figsize=(12, 6))
-        for team_id, temperatures in self.temperature_history.items():
-            plt.plot(temperatures, label=f"Team {team_id} Epsilon")
+# Function to run a full training routine.
+def run_training_routine():
+    # Pandas database of 400 player draft board from FantasyPros.com
+    player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
+        "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
 
-        plt.title("Temperature Decay Over Episodes")
-        plt.xlabel("Episode")
-        plt.ylabel("Temperature")
-        plt.legend()
-        plt.show()
+    # Setup draft parameters.
+    num_teams = 12
+    num_rounds = 20
+    position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
 
+    # Setup neural network structure parameters.
+    state_size = len(position_limits) * num_teams   # position_counts + round_number + other_teams_position_counts
+    action_size = len(position_limits)
+    num_layers = 3  # Number of hidden layers.
+    hidden_size = int(np.ceil(
+        state_size * (2 / 3))) + action_size  # Dynamically increase hidden neuron number with both action and state sizes.
+    hidden_layers = [hidden_size] * num_layers
 
-# Debug draft environment
-# player_data = pd.DataFrame({
-#     "player_name": ["QB1", "QB2", "QB3", "QB4", "QB5", "RB1", "RB2", "RB3", "RB4", "RB5",
-#                     "WR1", "WR2", "WR3", "WR4", "WR5", "TE1", "TE2", "TE3", "TE4", "TE5"],
-#     "position": ["QB", "QB", "QB", "QB", "QB", "RB", "RB", "RB", "RB", "RB",
-#                  "WR", "WR", "WR", "WR", "WR", "TE", "TE", "TE", "TE", "TE"],
-#     "projected_points": [360, 330, 300, 270, 240, 280, 220, 180, 150, 120,
-#                          210, 170, 150, 140, 120, 140, 110, 80, 70, 60]
-# })
+    # Construct the draft environment.
+    draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size, hidden_layers,
+                                   position_limits)
 
-# Pandas database of 400 player draft board from FantasyPros.com
-player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
-    "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
+    # Setup training routine.
+    temperatures = [3.0, 2.0, 1.0]
+    temperature_mins = [1.0, 0.5, 0.1]
+    temperature_decays = [0.9995, 0.99935, 0.9975]
+    max_norms = [1.0, 0.75, 0.5]  # Set the maximum norm values for gradient clipping
+    num_episodes = [2000, 2000, 1000]
 
-# Setup draft parameters.
-num_teams = 12
-num_rounds = 20
-position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
+    # Run agents through the training routine.
+    for phase in range(len(num_episodes)):
+        for agent in draft_simulator.agents:
+            agent.temperature = temperatures[phase]
+            agent.temperature_min = temperature_mins[phase]
+            agent.temperature_decay = temperature_decays[phase]
+            agent.max_norm = max_norms[phase]
 
-# Setup neural network structure parameters.
-state_size = len(position_limits) * num_teams   # position_counts + round_number + other_teams_position_counts
-action_size = len(position_limits)
-num_layers = 3  # Number of hidden layers.
-hidden_size = int(np.ceil(
-    state_size * (2 / 3))) + action_size  # Dynamically increase hidden neuron number with both action and state sizes.
-hidden_layers = [hidden_size] * num_layers
+        print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
+        draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
+        print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
+        draft_simulator.run_episode(verbose=True, exploit=True)
 
-# Construct the draft environment.
-draft_simulator = FantasyDraft(player_data, num_teams, num_rounds, state_size, action_size, hidden_layers,
-                               position_limits)
+    # Plot rewards and temperatures for debug purposes.
+    draft_simulator.plot_results()
 
-# Setup training routine.
-temperatures = [3.0, 2.0, 1.0]
-temperature_mins = [1.0, 0.5, 0.1]
-temperature_decays = [0.9995, 0.99935, 0.9975]
-max_norms = [1.0, 0.75, 0.5]  # Set the maximum norm values for gradient clipping
-num_episodes = [2000, 2000, 1000]
-
-# Run agents through the training routine.
-for phase in range(len(num_episodes)):
+    # Save Q-networks for competitive evaluation.
     for agent in draft_simulator.agents:
-        agent.temperature = temperatures[phase]
-        agent.temperature_min = temperature_mins[phase]
-        agent.temperature_decay = temperature_decays[phase]
-        agent.max_norm = max_norms[phase]
+        torch.save(agent.q_network.state_dict(), f"Trained_Agents/Deep_Q_Agents/DeepQAgent_{agent.team_id}_Q_Network.pt")
 
-    print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
-    draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
-    print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
-    draft_simulator.run_episode(verbose=True, exploit=True)
-
-# Plot rewards and temperatures for debug purposes.
-draft_simulator.plot_results()
-# draft_simulator.plot_temperatures()
+# run_training_routine()
