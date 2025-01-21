@@ -203,7 +203,7 @@ num_rounds = 20
 
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-draft_simulator.run_evaluations(num_drafts=10000)
+draft_simulator.run_evaluations(num_drafts=1000)
 
 
 

@@ -52,6 +52,7 @@ class QAgent:
         """Update the Q-table using the Q-learning formula."""
         best_next_action = max(self.position_counts.keys(), key=lambda position: self.q_table[(next_state, position)],
                                default=0)
+
         td_target = reward + self.discount_factor * self.q_table[(next_state, best_next_action)]
         td_delta = td_target - self.q_table[(state, action)]
         self.q_table[(state, action)] += self.learning_rate * td_delta
@@ -140,14 +141,18 @@ class FantasyDraft:
         """Calculate the reward attained for drafting a given player by normalizing it with respect to the maximum
         possible points for that position. If we are exceeding position limits, give negative reward."""
         reward = drafted_player["projected_points"] / self.max_points_by_position[drafted_player["position"]]
+
         if agent.position_counts[drafted_player["position"]] > self.position_limits[drafted_player["position"]]:
             over_draft_penalty = agent.position_counts[drafted_player["position"]] - self.position_limits[
-                drafted_player["position"]]  # Reward 2
+                drafted_player["position"]]
+
             if 0 in agent.position_counts.values():
-                over_draft_penalty += 1  # Reward 3
+                over_draft_penalty += 1
             reward = -(over_draft_penalty * reward)
-            if reward < -1:  # Reward 4
+
+            if reward < -1:
                 reward = -1
+
         return reward
 
     def train(self, num_episodes, verbose=False):
