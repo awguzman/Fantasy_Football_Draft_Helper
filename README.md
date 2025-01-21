@@ -18,7 +18,8 @@ Contains three python scripts. Get_Sleeper_Player_Map.py should be run once a se
 
 Contains a variety of increasingly complex multi-agent reinforcement learning algorithms which train on the real-world draft board data provided by Best_Ball_Live_Draft.py. Current status of implimentations:
 1. Tabular Q-Learning (MAQL): Implemented. 
-2. Deep Q-Learning (MADQL): Implemented. Takes advantage of neural networks to also take into account other agents actions.
+2. Deep Q-Learning (MADQL): Implemented. Improves upon tabular Q-learning by using neural networks to incorporate states involving information about all teams.
+3. Advantage Actor-Critic (A2C): Implemented. Needs fine-tuning.
 
 **Dynasty**
 
