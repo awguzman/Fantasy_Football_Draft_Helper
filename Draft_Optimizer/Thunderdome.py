@@ -1,3 +1,10 @@
+"""This file runs a series of drafts to evaluate the performance of the various RL algorithms.
+ We expect each algorithm is trained on the following parameters:
+num_teams = 12
+num_rounds = 20
+position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
+"""
+
 import pandas as pd
 import json
 from collections import defaultdict
@@ -13,13 +20,14 @@ class QAgent:
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.agent_type = "Q-Agent"
+
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
         self.total_points = 0  # Store total projected fantasy points for this agent.
         self.position_counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}  # Track drafted positions
 
-         # Load in the Q-table associated with the specific team_id
-        with open(f"Trained_Agents/Q_Agents/QAgent_{team_id}_Q_table.json", 'r') as json_file:
+         # Load in the Q-table associated with the particular team_id
+        with open(f"Trained_Agents/Q_Agents/QAgent_{self.team_id}_Q_table.json", 'r') as json_file:
             q_table_dict = json.load(json_file)
         q_table = defaultdict(float, {eval(k): v for k, v in q_table_dict.items()})
         self.q_table = q_table  # Q-table to store state-action values for this agent
@@ -46,6 +54,7 @@ class DeepQAgent:
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.agent_type = "Deep Q-Agent"
+
         self.drafted_players = []  # List to store drafted players for this agent
         self.total_reward = 0  # Store the total accumulated reward for this agent
         self.total_points = 0  # Store the total accumulated fantasy points for this agent.
@@ -53,7 +62,7 @@ class DeepQAgent:
 
         # Load in the Q-network for this specific team_id
         network = QNetwork(state_size=48, action_size=4, hidden_layers=[36, 36, 36])
-        network.load_state_dict(torch.load(f"Trained_Agents/Deep_Q_Agents/DeepQAgent_{team_id}_Q_Network.pt"))
+        network.load_state_dict(torch.load(f"Trained_Agents/Deep_Q_Agents/DeepQAgent_{self.team_id}_Q_Network.pt"))
         network.eval()
         self.q_network = network
 
@@ -66,7 +75,7 @@ class DeepQAgent:
 
     def get_state(self, all_agents):
         """Get the current state for the agent. We keep track of the position counts for all teams in the draft."""
-        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32) # Current agent's state
+        position_counts_tensor = torch.tensor(list(self.position_counts.values()), dtype=torch.float32) # Current agent's composition.
 
         # Other teams' position counts
         other_teams_counts = []
@@ -92,7 +101,7 @@ class A2CAgent:
         self.team_id = team_id  # Team identification for this agent
         self.agent_type = "A2C Agent"
 
-        # Initialize Actor and Critic networks
+        # Initialize Actor network for this specific team_id
         actor_network = ActorNetwork(state_size=48, action_size=4, hidden_layers=[36, 36, 36])
         actor_network.load_state_dict(torch.load(f"Trained_Agents/A2C_Agents/A2CAgent_{team_id}_Actor_Network.pt"))
         actor_network.eval()
@@ -126,11 +135,11 @@ class A2CAgent:
 
     def choose_action(self, state):
         """Choose an action using the actor network."""
-        state_tensor = state.unsqueeze(0)
         probs = self.actor_network(state)
         action_dist = torch.distributions.Categorical(probs)
         action = action_dist.sample()
         return action.item()
+
 
 class FantasyDraft:
 
@@ -164,11 +173,12 @@ class FantasyDraft:
         random.shuffle(draft_positions)
         self.q_agent_ids = draft_positions[ : 4]
         self.deep_q_agent_ids = draft_positions[4 : 8]
-        self.a2c_agent_ids = draft_positions[8:]
+        self.a2c_agent_ids = draft_positions[8 : ]
         self.agents = ([self.QAgents[i] for i in self.q_agent_ids] +
                        [self.DeepQAgents[j] for j in self.deep_q_agent_ids] +
                        [self.A2CAgents[k] for k in self.a2c_agent_ids])
         self.agents.sort(key=lambda agent: agent.team_id)  # Reorder agents by increasing team_id
+
         for agent in self.agents:
             agent.reset_agent()
 
@@ -180,6 +190,7 @@ class FantasyDraft:
             for team in self.draft_order:
                 agent = self.agents[team]
                 # Run the agent through the correct action selection for their type.
+
                 if team in self.q_agent_ids:
                     state = agent.get_state()
                     position = agent.choose_action(state)  # Select a position to draft.
@@ -267,6 +278,7 @@ class FantasyDraft:
             deep_q_agent_avg = deep_q_agent_totals / len(self.deep_q_agent_ids)
             a2c_agent_avg = a2c_agent_totals / len(self.a2c_agent_ids)
 
+            # Winner is agent type with maximum average points.
             winner = max(q_agent_avg, deep_q_agent_avg, a2c_agent_avg)
             if winner == q_agent_avg:
                 self.q_agent_wins += 1

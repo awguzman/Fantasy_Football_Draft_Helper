@@ -30,7 +30,7 @@ class QNetwork(nn.Module):
 
     @staticmethod
     def create_layers(state_size, action_size, hidden_layers):
-        """Helper method to create layers for the QNetwork."""
+        """Helper method to create layers for the Q-Network."""
         layers = []
         input_size = state_size
         for hidden_size in hidden_layers:
@@ -98,6 +98,7 @@ class DeepQAgent:
     def choose_action(self, state, exploit=False):
         """Choose an action using a softmax exploration policy."""
         state_tensor = state.unsqueeze(0)
+
         if exploit:  # Choose the best action if we are in an exploitative episode.
             action = self.q_network(state_tensor).argmax(dim=1).item()
         else:  # Otherwise, use softmax exploration.
@@ -109,7 +110,7 @@ class DeepQAgent:
 
     def update_q_network(self, states, actions, rewards, next_states, dones, q_verbose=False):
         """Update the Q-network with double Q-learning using a batch of experiences."""
-        # Compute current Q-values
+        # Compute Q-values for the current state.
         q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
 
         # Compute target Q-values
@@ -117,7 +118,7 @@ class DeepQAgent:
             next_q_values = self.target_network(next_states).max(dim=1)[0]
             target_q_values = rewards + (1 - dones) * self.discount_factor * next_q_values
 
-        # Compute loss
+        # Compute Huber loss
         loss = self.loss_fn(q_values, target_q_values.unsqueeze(1))
 
         # Backpropagation
@@ -141,9 +142,10 @@ class ReplayBuffer:
         self.buffer.append(experience)
 
     def sample(self, batch_size):
-        """Sample a batch of experiences for Q-network updating."""
+        """Sample a batch of shared experiences for Q-network updating."""
         indices = np.random.choice(len(self.buffer), batch_size, replace=False)
         batch = [self.buffer[i] for i in indices]
+
         # Unpack the batch into separate tensors
         states, actions, rewards, next_states, dones = zip(*batch)
         return (
@@ -165,20 +167,21 @@ class FantasyDraft:
         self.num_rounds = num_rounds
         self.draft_order = list(range(num_teams))
         self.position_limits = position_limits
+
+        # Initialize agents.
         self.agents = [DeepQAgent(team_id=i, state_size=state_size, action_size=action_size, hidden_layers=hidden_layers,
                                   position_limits=position_limits) for i in range(num_teams)]
+        self.reward_history = {i: [] for i in range(num_teams)}
 
         # Setup replay buffer.
         self.batch_size = 240  # Batch a full draft of experiences.
         self.replay_buffer = ReplayBuffer(capacity=2400)  # Shared replay buffer equivalent to 10 drafts of experiences.
 
-        # Track rewards and temperatures for debug purposes.
-        self.reward_history = {i: [] for i in range(num_teams)}
-        self.temperature_history = {i: [] for i in range(self.num_teams)}
+        # Cache max possible points by position for reward normalization.
+        self.max_points_by_position = player_data.groupby("position")["projected_points"].max()
 
-        self.max_points_by_position = player_data.groupby("position")["projected_points"].max()  # Cache max possible points by position for reward normalization.
-        self.target_update_frequency=10
-        self.reset_draft()  # Get the environment ready for training.
+        self.target_update_frequency = 10  # Target Q-network updating schedule.
+
 
     def reset_draft(self):
         """Reset the draft for a new episode."""
@@ -215,7 +218,7 @@ class FantasyDraft:
                 drafted_player = available_players.iloc[0]
                 drafted_player_index = drafted_player.name
 
-                # Add this player to the team.
+                # Add this player to the team and update stats.
                 agent.total_points += drafted_player["projected_points"]
                 agent.drafted_players.append(drafted_player["player_name"] + " " + drafted_player["position"])
                 agent.position_counts[drafted_player["position"]] += 1
@@ -225,7 +228,7 @@ class FantasyDraft:
                 agent.total_reward += reward
                 next_state = agent.get_state(self.agents)
 
-                # Add this experience to the replay buffer.
+                # Add this experience to the shared replay buffer.
                 experience = (state, action, reward, next_state, False)
                 self.replay_buffer.add(experience)
 
@@ -252,14 +255,17 @@ class FantasyDraft:
         possible points for that position. If we are exceeding position limits, give negative reward."""
         reward = drafted_player["projected_points"] / self.max_points_by_position[drafted_player["position"]]
 
+        # Penalty for overdrafting a position.
         if agent.position_counts[drafted_player["position"]] > self.position_limits[drafted_player["position"]]:
             over_draft_penalty = agent.position_counts[drafted_player["position"]] - self.position_limits[
                 drafted_player["position"]]
 
+            # Stronger penalty if overdrafting while another position is empty.
             if 0 in agent.position_counts.values():
                 over_draft_penalty += 1
-
             reward = -(over_draft_penalty * reward)
+
+            # Clip maximum negative reward.
             if reward < -1:
                 reward = -1
 
@@ -269,6 +275,7 @@ class FantasyDraft:
         """Train the agents over multiple episodes."""
         for episode in range(num_episodes):
             self.run_episode(exploit=False)
+
             for agent in self.agents:
                 # If replay buffer is large enough, train Q-Network on a random sample.
                 if len(self.replay_buffer.buffer) >= self.batch_size:
@@ -276,11 +283,9 @@ class FantasyDraft:
                     agent.update_q_network(*batch)
 
                 agent.scheduler.step()  # Increment the step count on the learning rate scheduler.
-                agent.temperature = max(agent.temperature * agent.temperature_decay,
-                                        agent.temperature_min)  # decay temp value.
-                self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards for debug purposes.
+                self.reward_history[agent.team_id].append(agent.total_reward)  # Log rewards.
 
-            # Update target networks periodically
+            # Update target networks periodically.
             if episode % self.target_update_frequency == 0:
                 for agent in self.agents:
                     agent.target_network.load_state_dict(agent.q_network.state_dict())
@@ -289,7 +294,7 @@ class FantasyDraft:
                 print(f"Episode {episode + 1}/{num_episodes} completed.")
 
     def plot_results(self):
-        """Plot the learning progress for debug purposes."""
+        """Plot the learning progress."""
         plt.figure(figsize=(12, 6))
         for team_id, rewards in self.reward_history.items():
             # Compute and plot a moving average for total rewards for each team.
@@ -304,6 +309,7 @@ class FantasyDraft:
 
 # Function to run a full training routine.
 def run_training_routine():
+    """Runs a full training routine and saves resulting Q-networks for competitive evaluation."""
     # Pandas database of 400 player draft board from FantasyPros.com
     player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
         "Player": "player_name", "POS": "position", "Fantasy Points": "projected_points"})
@@ -314,7 +320,7 @@ def run_training_routine():
     position_limits = {"QB": 3, "RB": 7, "WR": 8, "TE": 3}
 
     # Setup neural network structure parameters.
-    state_size = len(position_limits) * num_teams   # position_counts + round_number + other_teams_position_counts
+    state_size = len(position_limits) * num_teams   # position_counts + other_teams_position_counts
     action_size = len(position_limits)
     num_layers = 3  # Number of hidden layers.
     hidden_size = int(np.ceil(
@@ -334,7 +340,7 @@ def run_training_routine():
 
     # Run agents through the training routine.
     for phase in range(len(num_episodes)):
-        for agent in draft_simulator.agents:
+        for agent in draft_simulator.agents:  # Change Softmax and max_norm parameters on each phase.
             agent.temperature = temperatures[phase]
             agent.temperature_min = temperature_mins[phase]
             agent.temperature_decay = temperature_decays[phase]
@@ -345,7 +351,7 @@ def run_training_routine():
         print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
         draft_simulator.run_episode(verbose=True, exploit=True)
 
-    # Plot rewards and temperatures for debug purposes.
+    # Plot rewards.
     draft_simulator.plot_results()
 
     # Save Q-networks for competitive evaluation.
