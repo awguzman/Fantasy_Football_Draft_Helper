@@ -20,6 +20,7 @@ Contains a variety of increasingly complex multi-agent reinforcement learning al
 1. Tabular Q-Learning (MAQL): Implemented. 
 2. Deep Q-Learning (MADQL): Implemented. Improves upon tabular Q-learning by using neural networks to incorporate states involving information about all teams.
 3. Advantage Actor-Critic (A2C): Implemented. Needs fine-tuning.
+4. Proximal Policy Optimization (PPO): Implemented.
 
 **Dynasty**
 
