@@ -61,7 +61,8 @@ class CriticNetwork(nn.Module):
 
 class A2CAgent:
 
-    def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, max_norm=1.0, actor_lr=1e-3, critic_lr=1e-3, discount_factor=0.95):
+    def __init__(self, team_id, state_size, action_size, hidden_layers, position_limits, actor_max_norm=1.0,
+                 critic_max_norm=1.0, actor_lr=1e-3, critic_lr=5e-4, discount_factor=0.95):
         """ Initialize an individual agent for a team. """
         self.team_id = team_id  # Team identification for this agent
         self.position_limits = position_limits
@@ -70,7 +71,8 @@ class A2CAgent:
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.discount_factor = discount_factor
-        self.max_norm = max_norm  # Max gradient norm.
+        self.actor_max_norm = actor_max_norm  # Max gradient norm for actor network gradient clipping.
+        self.critic_max_norm = critic_max_norm  # Max gradient norm for critic network gradient clipping.
 
         # Initialize Actor and Critic networks
         self.actor_network = ActorNetwork(state_size, action_size, hidden_layers)
@@ -122,7 +124,6 @@ class A2CAgent:
 
     def choose_action(self, state):
         """Choose an action using the actor network."""
-        state_tensor = state.unsqueeze(0)
         probs = self.actor_network(state)
         action_dist = torch.distributions.Categorical(probs)
         action = action_dist.sample()
@@ -131,6 +132,7 @@ class A2CAgent:
 
     def update_networks(self, debug=False):
         """Compute advantages and train actor-critic networks."""
+        # Compute discounted return.
         target = 0
         returns = []
         for reward in reversed(self.rewards):
@@ -138,6 +140,7 @@ class A2CAgent:
             returns.insert(0, target)
         returns = torch.tensor(returns)
 
+        # Use returns to compute advantage.
         values = torch.stack(self.values)
         advantages = returns - values.squeeze()
 
@@ -145,7 +148,7 @@ class A2CAgent:
         actor_loss = -(torch.stack(self.log_probs) * advantages.detach()).mean()
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), max_norm=self.max_norm)
+        torch.nn.utils.clip_grad_norm_(self.actor_network.parameters(), max_norm=self.actor_max_norm)
         self.actor_optimizer.step()
         self.actor_scheduler.step()
 
@@ -153,10 +156,11 @@ class A2CAgent:
         critic_loss = advantages.pow(2).mean()
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_network.parameters(), max_norm=self.max_norm)
+        torch.nn.utils.clip_grad_norm_(self.critic_network.parameters(), max_norm=self.critic_max_norm)
         self.critic_optimizer.step()
         self.critic_scheduler.step()
 
+        # Debug log to track learning progress.
         if debug:
             print(f"  Agent {self.team_id + 1} updating networks...")
             print(f"  Agent {self.team_id + 1}: Actor Loss = {actor_loss.item():.6f}")
@@ -180,7 +184,7 @@ class FantasyDraft:
         self.agents = [A2CAgent(team_id=i, state_size=state_size, action_size=action_size, hidden_layers=hidden_layers,
                                   position_limits=position_limits) for i in range(num_teams)]
 
-        # Track rewards and temperatures for debug purposes.
+        # Track rewards.
         self.reward_history = {i: [] for i in range(num_teams)}
 
         # Cache max possible points by position for reward normalization.
@@ -270,7 +274,7 @@ class FantasyDraft:
 
         return reward
 
-    def train(self, num_episodes, verbose=False, debug=False):
+    def train(self, num_episodes, verbose=False):
         """Train the agents over multiple episodes."""
         for episode in range(num_episodes):
             self.run_episode()
@@ -319,13 +323,16 @@ def run_training_routine():
                                    position_limits)
 
     # Setup training routine.
-    max_norms = [1.5, 1.0, 0.5]
+    actor_max_norms = [1.0, 0.75, 0.5]
+    critic_max_norms = [1.5, 1.25, 1.0]
     num_episodes = [2000, 2000, 1000]
 
     # Run agents through the training routine.
     for phase in range(len(num_episodes)):
         for agent in draft_simulator.agents:
-            agent.max_norm = max_norms[phase]
+            agent.actor_max_norm = actor_max_norms[phase]
+            agent.critic_max_norm = critic_max_norms[phase]
+
         print(f"\nBeginning training phase {phase + 1}. Number of episodes in this phase is {num_episodes[phase]}.")
         draft_simulator.train(num_episodes=num_episodes[phase], verbose=False)
         print(f"Phase {phase + 1} complete. Running a test draft with no exploitation.")
