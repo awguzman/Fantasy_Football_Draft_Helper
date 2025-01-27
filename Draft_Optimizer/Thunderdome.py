@@ -10,6 +10,7 @@ import json
 from collections import defaultdict
 import torch
 import random
+import matplotlib.pyplot as plt
 
 from DeepQlearning_Drafter import QNetwork
 from A2C_Drafter import ActorNetwork as A2CActorNetwork
@@ -204,11 +205,10 @@ class FantasyDraft:
         self.A2CAgents = [A2CAgent(team_id=k) for k in range(num_teams)]
         self.PPOAgents = [PPOAgent(team_id=l) for l in range(num_teams)]
 
-        # Track the number of wins by average points each type of agent gets.
-        self.q_agent_wins = 0
-        self.deep_q_agent_wins = 0
-        self.a2c_agent_wins = 0
-        self.ppo_agent_wins = 0
+        # Track the number of wins by total points of each type of agent.
+        self.agent_type_totals = {"Q-Agent": 0, "Deep Q-Agent": 0, "A2C Agent": 0, "PPO Agent": 0}
+        self.agent_type_wins = {"Q-Agent": 0, "Deep Q-Agent": 0, "A2C Agent": 0, "PPO Agent": 0}
+        self.win_history = {i: [] for i in ["Q-Agent", "Deep Q-Agent", "A2C Agent", "PPO Agent"]}
 
     def reset_draft(self):
         """Reset the draft for a new draft."""
@@ -216,14 +216,15 @@ class FantasyDraft:
         self.current_round = 0
         self.current_team = 0
         self.draft_order = list(range(self.num_teams))  # Reset draft order
+        self.agent_type_totals = {"Q-Agent": 0, "Deep Q-Agent": 0, "A2C Agent": 0, "PPO Agent": 0}
 
         # Randomly but equally distribute a selection of the preloaded agents.
-        draft_positions = list(range(num_teams))
-        random.shuffle(draft_positions)
-        self.q_agent_ids = draft_positions[ : 3]
-        self.deep_q_agent_ids = draft_positions[3 : 6]
-        self.a2c_agent_ids = draft_positions[6 : 9]
-        self.ppo_agent_ids = draft_positions[9 : ]
+        early_picks, mid_picks, late_picks = self.draft_order[0:4], self.draft_order[4:8], self.draft_order[8:12]
+        random.shuffle(early_picks), random.shuffle(mid_picks), random.shuffle(late_picks)
+        self.q_agent_ids = [early_picks[0], mid_picks[0], late_picks[0]]
+        self.deep_q_agent_ids = [early_picks[1], mid_picks[1], late_picks[1]]
+        self.a2c_agent_ids = [early_picks[2], mid_picks[2], late_picks[2]]
+        self.ppo_agent_ids = [early_picks[3], mid_picks[3], late_picks[3]]
         self.agents = ([self.QAgents[i] for i in self.q_agent_ids] +
                        [self.DeepQAgents[j] for j in self.deep_q_agent_ids] +
                        [self.A2CAgents[k] for k in self.a2c_agent_ids] +
@@ -268,7 +269,6 @@ class FantasyDraft:
             self.current_round += 1  # Move to next round after all teams have picked.
             self.draft_order.reverse()  # Reverse the draft order for snake draft formats.
 
-
         # Print episode summary
         if verbose:
             for agent in self.agents:
@@ -279,36 +279,30 @@ class FantasyDraft:
         for draft in range(num_drafts):
             self.run_draft(verbose=False)
 
-            # Compute average total points for each agent type.
-            q_agent_totals, deep_q_agent_totals, a2c_agent_totals, ppo_agent_totals = 0, 0, 0, 0
+            # Total up how many points each type of agent got.
             for agent in self.agents:
-                if agent.team_id in self.q_agent_ids:
-                    q_agent_totals += agent.total_points
-                elif agent.team_id in self.deep_q_agent_ids:
-                    deep_q_agent_totals += agent.total_points
-                elif agent.team_id in self.a2c_agent_ids:
-                    a2c_agent_totals += agent.total_points
-                else:
-                    ppo_agent_totals += agent.total_points
+                self.agent_type_totals[agent.agent_type] += agent.total_points
 
-            q_agent_avg = q_agent_totals / len(self.q_agent_ids)
-            deep_q_agent_avg = deep_q_agent_totals / len(self.deep_q_agent_ids)
-            a2c_agent_avg = a2c_agent_totals / len(self.a2c_agent_ids)
-            ppo_agent_avg = ppo_agent_totals /  len(self.ppo_agent_ids)
+            # Give the win to the agent type with most total points.
+            winning_type = max(self.agent_type_totals, key=lambda total: self.agent_type_totals[total])
+            self.agent_type_wins[winning_type] += 1
+            for type in self.agent_type_wins:
+                self.win_history[type].append(self.agent_type_wins[type])
 
-            # Winner is agent type with maximum average points.
-            winner = max(q_agent_avg, deep_q_agent_avg, a2c_agent_avg, ppo_agent_avg)
-            if winner == q_agent_avg:
-                self.q_agent_wins += 1
-            elif winner == deep_q_agent_avg:
-                self.deep_q_agent_wins += 1
-            elif winner == a2c_agent_avg:
-                self.a2c_agent_wins += 1
-            else:
-                self.ppo_agent_wins += 1
+        for type in self.agent_type_wins:
+            print(f"{type} Wins : {self.agent_type_wins[type]}")
 
-        print(f"Q-learning agents wins: {self.q_agent_wins} | Deep Q-learning agent wins: {self.deep_q_agent_wins} | A2C agent wins: {self.a2c_agent_wins} | PPO agent wins: {self.ppo_agent_wins}")
+    def plot_results(self):
+        """Plot the learning progress for debug purposes."""
+        plt.figure(figsize=(12, 6))
+        for type, wins in self.win_history.items():
+            plt.plot(wins, label=f"{type} Wins")
 
+        plt.title("Total Wins Over Episodes")
+        plt.xlabel("Episode")
+        plt.ylabel("Total Wins")
+        plt.legend()
+        plt.show()
 
 # Pandas database of 400 player draft board from FantasyPros.com
 player_data = pd.read_csv("../Best_Ball/Best_Ball_Draft_Board.csv").drop('Unnamed: 0', axis=1).rename(columns={
@@ -318,7 +312,8 @@ num_rounds = 20
 
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-draft_simulator.run_evaluations(num_drafts=1000)
+draft_simulator.run_evaluations(num_drafts=10000)
+draft_simulator.plot_results()
 
 
 
