@@ -1,7 +1,7 @@
 # Best_Ball_Draft_Helper
 This is a repository of python code intended to use data analysis and machine learning techniques to help me draft in my fantasy football Leagues.
 
-We primarily use the Python data science library Pandas to perform data analysis on fantasy football data. For machine learning purposes, we use PyTorch and TensorFlow.
+We primarily use the Python data science library Pandas to perform data analysis on fantasy football data. For machine learning purposes, we use PyTorch and TensorFlow/Keras.
 
 Planned additions/updates: 
 
@@ -18,9 +18,10 @@ Contains three python scripts. Get_Sleeper_Player_Map.py should be run once a se
 
 Contains a variety of increasingly complex multi-agent reinforcement learning algorithms which train on the real-world draft board data provided by Best_Ball_Live_Draft.py. Current status of implimentations:
 1. Tabular Q-Learning (MAQL): Implemented. 
-2. Deep Q-Learning (MADQL): Implemented. Improves upon tabular Q-learning by using neural networks to incorporate states involving information about all teams.
-3. Advantage Actor-Critic (A2C): Implemented. Needs fine-tuning.
-4. Proximal Policy Optimization (PPO): Implemented.
+2. Deep Q-Learning (MADQL): Implemented. 
+3. Advantage Actor-Critic (A2C): Implemented. Best performing algorithm as of 1/27/25.
+4. Proximal Policy Optimization (PPO): Implemented. Near equal performance to A2C.
+5. Thunderdome: A competitive evaluation environment where three agents of each of the above types draft against one another. Points per type are added up and a winner is deduced from the largest total points. We use this to evaluate the algorithms against one another.
 
 **Dynasty**
 
