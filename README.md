@@ -6,6 +6,7 @@ We primarily use the Python data science library Pandas to perform data analysis
 Planned additions/updates: 
 
 - ~~Multi-agent reinforcement learning algorithms for optimizing draft picks (DQL, PPO, A2C, etc.)~~
+- Rookie production prediction classifier.
 - Integrate Sleeper.com API into RL algorithms.
 - Best-Ball live draft board using Sleeper.com API (Waiting for the offseason due to API particularities)
 - Update Touchdown Regression files for 2025 season (Waiting for nfl_data_py update)
@@ -31,6 +32,9 @@ Note: Due to the limitations of Q-learning, we Q-agent's state only encompasses 
 **Dynasty**
 
 Contains two python scripts and one called auxiliary file. Get_Sleeper_Player_Map.py should be run once a season after each draft to update it with rookies. Dynasty_Draft_Board.py should be run once on draft day and provides a complete dynasty draft board for your Sleeper.com league.
+
+**Performance_Predictions**
+Rookie_classifier.py currently predicts rookie first year fantasy performance based on draft overall and combine data. Planning on incorporating college career data in the future.
 
 **Touchdown Regression**
 

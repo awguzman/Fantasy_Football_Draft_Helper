@@ -1,3 +1,8 @@
+"""
+This file trains and evaluated a XGBoost classifier designed to predict rookie performance based
+on combine and college career data.
+"""
+
 import pandas as pd
 import nfl_data_py as nfl
 
