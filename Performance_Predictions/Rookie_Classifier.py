@@ -109,7 +109,7 @@ class RookieClassifier:
     def prepare_data(self):
         """Prepares the data for training."""
 
-        # Split features and target
+        # Create training features and target
         X = self.rookie_data[self.features]
         y = self.rookie_data[self.target]
 
@@ -131,7 +131,7 @@ class RookieClassifier:
         print(f"Data split complete: Train set size: {len(self.X_train)}, Test set size: {len(self.X_test)}")
 
     def train_model(self):
-        """Trains an XGBoost model with GridSearchCV and optional early stopping."""
+        """Trains an XGBoost model with GridSearchCV."""
 
         # Define XGBoost model.
         xgb_model = xgb.XGBClassifier(

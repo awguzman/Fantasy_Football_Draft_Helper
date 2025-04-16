@@ -34,7 +34,10 @@ Note: Due to the limitations of Q-learning, we Q-agent's state only encompasses 
 Contains two python scripts and one called auxiliary file. Get_Sleeper_Player_Map.py should be run once a season after each draft to update it with rookies. Dynasty_Draft_Board.py should be run once on draft day and provides a complete dynasty draft board for your Sleeper.com league.
 
 **Performance_Predictions**
-Rookie_classifier.py currently predicts rookie first year fantasy performance based on draft overall and combine data. Planning on incorporating college career data in the future.
+
+Contains a variety of classifiers (as of now, XGBoost based) designed to perform predictive analysis with respect to fantasy production.
+1. Rookie_classifier.py currently predicts rookie first year fantasy performance based on draft overall and combine data. Planning on incorporating college career data in the future.
+2. Draft_Tiers.py predicts player performance for the upcoming season based on that players previous seasons stats.
 
 **Touchdown Regression**
 
