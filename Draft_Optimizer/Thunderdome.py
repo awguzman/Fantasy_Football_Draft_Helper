@@ -43,7 +43,7 @@ class QAgent:
 
     def get_state(self):
         """Get the current state representation for the agent."""
-        return tuple(sorted(self.position_counts.values()))
+        return tuple(self.position_counts.values())
 
     def choose_action(self, state):
         """Choose best action from the Q-table."""
@@ -250,12 +250,11 @@ class FantasyDraft:
                 else:
                     state = agent.get_state(self.agents)
                     action = agent.choose_action(state)  # Use the neural network to choose an action.
-                    position = list(agent.position_counts.keys())[action]  # Get a list of players who fit the action chosen.
+                    position = list(agent.position_counts.keys())[action]  # Get the position of the chosen action
 
                 # Find the best player available at that position.
                 available_position_players = self.available_players[self.available_players["position"] == position]
-                drafted_player = available_position_players.iloc[
-                    0]  # Assumes draft board is sorted by projected_points
+                drafted_player = available_position_players.iloc[0]  # Assumes draft board is sorted by projected_points
                 drafted_player_index = drafted_player.name
 
                 # Update agent stats
@@ -312,7 +311,7 @@ num_rounds = 20
 
 draft_simulator = FantasyDraft(player_data, num_teams, num_rounds)
 
-draft_simulator.run_evaluations(num_drafts=10000)
+draft_simulator.run_evaluations(num_drafts=1000)
 draft_simulator.plot_results()
 
 
