@@ -7,11 +7,12 @@ import warnings; warnings.simplefilter('ignore')
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
-#   Import play-by-play data from 2012 to 2022 seasons (This may take a minute)
-seasons = range(2000, 2023)
+#   Import play-by-play data from 2012 to 2024 seasons (This may take a minute)
+print("Importing play-by-play data...")
+seasons = range(2000, 2024)
 pbp_df = nfl.import_pbp_data(seasons)
 
-#   Reduce to looking at relavent columns pertaining to rushing touchdowns.
+#   Reduce to looking at relevant columns pertaining to rushing touchdowns.
 rushing_df = pbp_df[['rush_attempt', 'rush_touchdown', 'yardline_100', 'two_point_attempt']]
 
 #   Get rid of two-point conversion attempts.
@@ -20,7 +21,7 @@ rushing_df = rushing_df.loc[(rushing_df['two_point_attempt'] == 0) & (rushing_df
 #   Compute the probability that a rushing touchdown is achieved at each yard line.
 rushing_df_probs = rushing_df.groupby('yardline_100')['rush_touchdown'].value_counts(normalize = -True)
 
-#   Create a new datafrme indexed by yard line including the touchdown probabilities calculated.
+#   Create a new dataframe indexed by yard line including the touchdown probabilities calculated.
 rushing_df_probs = pd.DataFrame({
     'probability_of_touchdown': rushing_df_probs.values}, index=rushing_df_probs.index).reset_index()
 
@@ -30,12 +31,12 @@ rushing_df_probs = rushing_df_probs.loc[rushing_df_probs['rush_touchdown'] == 1]
 #   Get rid of rush_touchdown as this is implicit after getting rid of non-rushing plays.
 rushing_df_probs = rushing_df_probs.drop('rush_touchdown', axis=1)
 
-#   Import 2023 play-by-play data and isolate players who scored rushing touchdowns.
-pbp_2023_df = nfl.import_pbp_data([2023])
-pbp_2023_df = pbp_2023_df[['rusher_player_name', 'rusher_player_id', 'posteam', 'rush_touchdown', 'yardline_100']].dropna()
+#   Import 2024 play-by-play data and isolate players who scored rushing touchdowns.
+pbp_2024_df = nfl.import_pbp_data([2024])
+pbp_2024_df = pbp_2024_df[['rusher_player_name', 'rusher_player_id', 'posteam', 'rush_touchdown', 'yardline_100']].dropna()
 
-#   Merge 2023 pbp dataframe with probability dataframe along yard line.
-exp_df = pbp_2023_df.merge(rushing_df_probs, how='left', on='yardline_100')
+#   Merge 2024 pbp dataframe with probability dataframe along yard line.
+exp_df = pbp_2024_df.merge(rushing_df_probs, how='left', on='yardline_100')
 
 #   Group the pbp data by each player and add up the probabilities and actual touchdowns to find the respective totals.
 exp_df = exp_df.groupby(['rusher_player_name', 'rusher_player_id', 'posteam'], as_index = False).agg({
@@ -52,8 +53,8 @@ exp_df = exp_df.rename(columns={
     'rush_touchdown': 'Actual Touchdowns'
 })
 
-#   Import roster data to drop all non running back players from exp_df.
-roster_df = nfl.import_seasonal_rosters([2023])
+#   Import roster data to drop all non-running back players from exp_df.
+roster_df = nfl.import_seasonal_rosters([2024])
 roster_df = roster_df[['player_id', 'position']].rename(columns = {"player_id": "ID"})
 exp_df = exp_df.merge(roster_df, on='ID')
 exp_df = exp_df[exp_df['position'] == 'RB'].drop('position', axis=1)
