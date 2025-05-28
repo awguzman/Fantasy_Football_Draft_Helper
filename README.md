@@ -5,12 +5,9 @@ We primarily use the Python data science library Pandas to perform data analysis
 
 Planned additions/updates: 
 
-- ~~Multi-agent reinforcement learning algorithms for optimizing draft picks (DQL, PPO, A2C, etc.)~~
-- Rookie production prediction classifier.
 - Integrate Sleeper.com API into RL algorithms.
 - Best-Ball live draft board using Sleeper.com API (Waiting for the offseason due to API particularities)
-- ~~Update Touchdown Regression files for 2025 season (Waiting for nfl_data_py update)~~
-
+- Implement a non-linear touchdown regression model
 -------------------------------------------------------------------------------------------------------------------------------
 **Best Ball**
 
@@ -41,4 +38,5 @@ Contains a variety of classifiers (as of now, XGBoost based) designed to perform
 
 **Touchdown Regression**
 
-Contains three python scripts meant to compute touchdown regression candidacy for the 2024 season (will update each offseason). We import play-by-play data from 2000-2023 via nfl_data_py and compute the expected touchdowns vs actual touchdowns for each non-rookie RB, WR, and TE player in the 2023 season. We can use this to tell whether we expect a player to perform better or worse with respect to touchdown scoring in the next season. Each script generates a .csv file.
+We compute touchdown regression candidates based on historical scoring probabilities. Below is an example for RB's in the 2024 season.
+![screenshot](Touchdown%20Regression/RB2024Reg.png)
