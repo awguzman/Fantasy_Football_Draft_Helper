@@ -98,8 +98,8 @@ teams = ['ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE', 'DAL', 'DEN', '
          'LV', 'LAR', 'LAC', 'MIA', 'MIN', 'NE', 'NO', 'NYG', 'NYJ', 'PHI', 'PIT', 'SF', 'SEA', 'TB', 'TEN', 'WAS']
 byes = ['(5)', '(6)', '(7)', '(8)', '(9)', '(10)', '(11)', '(12)', '(13)', '(14)']
 
-
-def player_cleanup(df):  # Function to get rid of any team, bye week, or injury data from the player name index.
+# Function to get rid of any team, bye week, or injury data from the player name index.
+def player_cleanup(df):
     for _, row in df.iterrows():
         player = row['Player'].split(' ')
         for i in range(len(player)):

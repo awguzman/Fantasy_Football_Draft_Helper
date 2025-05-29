@@ -1,4 +1,4 @@
-#   Creates a .csv file giving mapping data for players on the Sleeper platform.
+#   Script to create a .csv file giving mapping data for players identification on the Sleeper platform.
 #   Only needs to be run every once in a while. The .csv file generated will be read by other scripts.
 
 import pandas as pd
