@@ -16,7 +16,6 @@ fantasy football leagues.
 
 **Planned additions/updates**
 - Integrate Sleeper.com API into RL algorithms for live pick recommendations.
-- Best-Ball live draft board using Sleeper.com API
 - Implement a non-linear touchdown regression model
 -------------------------------------------------------------------------------------------------------------------------------
 **[Best_Ball](Best_Ball)**
