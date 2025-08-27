@@ -5,54 +5,112 @@
 import Get_Sleeper_Rosters
 import pandas as pd
 
+import requests, re, json
+
 # turn off truncation of rows and columns if needed.
-pd.set_option('display.max_rows', None)
+# pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
-# Store html url's for each position measuring projected season stats.
-qb_url = "https://www.fantasypros.com/nfl/projections/qb.php?week=draft"
-rb_url = "https://www.fantasypros.com/nfl/projections/rb.php?week=draft"
-wr_url = "https://www.fantasypros.com/nfl/projections/wr.php?week=draft"
-te_url = "https://www.fantasypros.com/nfl/projections/te.php?week=draft"
-dynasty_url = "https://www.fantasypros.com/nfl/adp/dynasty-overall.php"
+def compute_projected_points(pos: str) -> pd.DataFrame:
+    """ Scrape Fantasypros.com projected stats for fantasy point calculations. """
 
-# Scrape Fantasy Pro's projected player stats and store in DataFrames according to position.
-qb_df = pd.read_html(qb_url, header=1)[0]
-rb_df = pd.read_html(rb_url, header=1)[0]
-wr_df = pd.read_html(wr_url, header=1)[0]
-te_df = pd.read_html(te_url, header=1)[0]
+    if pos not in ['qb', 'rb', 'wr', 'te']:
+        raise Exception(f'Invalid position: {pos}. Must be qb, rb, wr, or te. ')
 
-# Scrape Fantasy Pro's dynasty ADP data and store in a DataFrame.
-dynasty_df = pd.read_html(dynasty_url, header=0)[0]
-dynasty_df = dynasty_df.rename({'Player Team (Bye)': 'Player', 'AVG': 'Avg ADP'}, axis=1)
+    # Store fantasypros url for projected stats.
+    proj_url = f'https://www.fantasypros.com/nfl/projections/{pos}.php?week=draft'
 
-# Reformat the player names in the Dynasty ADP DataFrame to match other DataFrame formats.
-byes = ['(5)', '(6)', '(7)', '(8)', '(9)', '(10)', '(11)', '(12)', '(13)', '(14)']
+    # Scrape Fantasy Pro's projected player stats and store in a DataFrame.
+    proj_df = pd.read_html(proj_url, header=1)[0]
 
-def player_cleanup(df):  # Function to get rid of any team, bye week, or injury data from the player name index.
-    for _, row in df.iterrows():
-        player = row['Player'].split(' ')
-        for i in range(len(player)):
-            if player[i] in byes:
-                player[i] = ''
-        player = ' '.join(player).strip()
-        df.update(df['Player'].replace({row['Player']: player}))
-    return df
+    # Pick out columns that are important for fantasy point calculation.
+    if pos == 'qb':
+        stats_columns = ['Player', 'YDS', 'TDS', 'INTS', 'YDS.1', 'TDS.1', 'FL']
+    elif pos == 'te':
+        stats_columns = ['Player', 'REC', 'YDS', 'TDS', 'FL']
+    else:
+        stats_columns = ['Player', 'YDS', 'TDS', 'REC', 'YDS.1', 'TDS.1', 'FL']
 
+    # Filter columns according to the columns picked out above.
+    proj_df = proj_df[stats_columns]
 
-dynasty_df = player_cleanup(dynasty_df)
+    # Compute projected fantasy points and add a column in the positional DataFrames.
+    if pos == 'qb':
+        proj_df['Proj. Points'] = (
+                proj_df['YDS'] * scoring_weights['passing_yds'] +
+                proj_df['TDS'] * scoring_weights['passing_td'] +
+                proj_df['INTS'] * scoring_weights['int'] +
+                proj_df['YDS.1'] * scoring_weights['rushing_yds'] +
+                proj_df['TDS.1'] * scoring_weights['rushing_td'] +
+                proj_df['FL'] * scoring_weights['fumble'])
 
-# Pick out columns of each positional DataFrame that are important for fantasy point calculation.
-qb_stats = ['Player', 'YDS', 'TDS', 'INTS', 'YDS.1', 'TDS.1', 'FL']
-rb_stats = ['Player', 'YDS', 'TDS', 'REC', 'YDS.1', 'TDS.1', 'FL']
-wr_stats = ['Player', 'REC', 'YDS', 'TDS', 'YDS.1', 'TDS.1', 'FL']
-te_stats = ['Player', 'REC', 'YDS', 'TDS', 'FL']
+    elif pos == 'te':
+        proj_df['Proj. Points'] = (
+                proj_df['REC'] * scoring_weights['receptions'] +
+                proj_df['YDS'] * scoring_weights['receiving_yds'] +
+                proj_df['TDS'] * scoring_weights['receiving_td'] +
+                proj_df['FL'] * scoring_weights['fumble'])
 
-# Filter columns of each positional DataFrame according to the columns picked out above.
-qb_df = qb_df[qb_stats]
-rb_df = rb_df[rb_stats]
-wr_df = wr_df[wr_stats]
-te_df = te_df[te_stats]
+    else:
+        proj_df['Proj. Points'] = (
+                proj_df['YDS'] * scoring_weights['rushing_yds'] +
+                proj_df['TDS'] * scoring_weights['rushing_td'] +
+                proj_df['REC'] * scoring_weights['receptions'] +
+                proj_df['YDS.1'] * scoring_weights['receiving_yds'] +
+                proj_df['TDS.1'] * scoring_weights['receiving_td'] +
+                proj_df['FL'] * scoring_weights['fumble'])
+
+    # Filter out raw projected stats.
+    proj_df = proj_df[['Player', 'Proj. Points']]
+
+    return proj_df
+
+def get_ecr_data(pos:str) -> pd.DataFrame:
+    """ Scrape Fantasypros.com ECR Data. """
+
+    if pos not in ['qb', 'rb', 'wr', 'te']:
+        raise Exception(f'Invalid position: {pos}. Must be qb, rb, wr, or te. ')
+
+    ecr_url = f'https://www.fantasypros.com/nfl/rankings/dynasty-{pos}.php'
+
+    # Find the ecrData JSON in the html file. Load it in as a DataFrame.
+    response = requests.get(ecr_url)
+    match = re.search(r'var ecrData = (\{.*?\});', response.text)
+    ecr_json = match.group(1)
+    ecr_data = json.loads(ecr_json)
+    players_list = (ecr_data.get('players', []))
+    ecr_df = pd.DataFrame(players_list)
+
+    ecr_df['Player'] = ecr_df['player_name'] + ' ' + ecr_df['player_team_id']
+    ecr_columns = ['Player', 'player_age', 'player_bye_week', 'pos_rank', 'rank_std']
+    ecr_df = ecr_df[ecr_columns]
+    ecr_df = ecr_df.rename({'player_age': 'Age',
+                            'player_bye_week': 'Bye',
+                            'pos_rank': 'Rank',
+                            'rank_std': 'Confidence'}, axis=1)
+
+    return ecr_df
+
+def get_draft_board(pos: str) -> pd.DataFrame:
+
+    if pos not in ['qb', 'rb', 'wr', 'te']:
+        raise Exception(f'Invalid position: {pos}. Must be qb, rb, wr, or te. ')
+
+    stats_df = compute_projected_points(pos)
+    ecr_df = get_ecr_data(pos)
+
+    # Merge projected points and ecr dataFrames.
+    board_df = ecr_df.merge(stats_df, how='left', on='Player')
+
+    # Import the Get_Sleeper_Rosters.py roster data.
+    taken_df = Get_Sleeper_Rosters.roster_df
+
+    # Remove taken players from the draft board.
+    for _, row in taken_df.iterrows():
+        for player in row['Roster']:
+            board_df.drop(board_df[board_df['Player'].str.contains(player)].index, inplace=True)
+
+    return board_df
 
 # Set scoring weights for fantasy point calculations.
 # Free to change to match a given league.
@@ -68,60 +126,7 @@ scoring_weights = {
     'fumble': -1
 }
 
-# Compute fantasy points and add a column in the positional DataFrames, then filter out raw stats.
-qb_df['Fantasy Points'] = (
-    qb_df['YDS']*scoring_weights['passing_yds'] +
-    qb_df['TDS']*scoring_weights['passing_td'] +
-    qb_df['INTS']*scoring_weights['int'] +
-    qb_df['YDS.1']*scoring_weights['rushing_yds'] +
-    qb_df['TDS.1']*scoring_weights['rushing_td'] +
-    qb_df['FL']*scoring_weights['fumble']
-)
-
-rb_df['Fantasy Points'] = (
-    rb_df['YDS']*scoring_weights['rushing_yds'] +
-    rb_df['TDS']*scoring_weights['rushing_td'] +
-    rb_df['REC']*scoring_weights['receptions'] +
-    rb_df['YDS.1']*scoring_weights['receiving_yds'] +
-    rb_df['TDS.1']*scoring_weights['receiving_td'] +
-    rb_df['FL']*scoring_weights['fumble']
-)
-
-wr_df['Fantasy Points'] = (
-    wr_df['REC']*scoring_weights['receptions'] +
-    wr_df['YDS']*scoring_weights['receiving_yds'] +
-    wr_df['TDS']*scoring_weights['receiving_td'] +
-    wr_df['YDS.1']*scoring_weights['rushing_yds'] +
-    wr_df['TDS.1']*scoring_weights['rushing_td'] +
-    wr_df['FL']*scoring_weights['fumble']
-)
-
-te_df['Fantasy Points'] = (
-    te_df['REC']*scoring_weights['receptions'] +
-    te_df['YDS']*scoring_weights['receiving_yds'] +
-    te_df['TDS']*scoring_weights['receiving_td'] +
-    te_df['FL']*scoring_weights['fumble']
-)
-
-# Combine the positional DataFrames into a single DataFrame.
-qb_df = qb_df[['Player', 'Fantasy Points']]
-rb_df = rb_df[['Player', 'Fantasy Points']]
-wr_df = wr_df[['Player', 'Fantasy Points']]
-te_df = te_df[['Player', 'Fantasy Points']]
-pos_df = [qb_df, rb_df, wr_df, te_df]
-board_df = pd.concat(pos_df).sort_values(by='Fantasy Points', ascending=False, ignore_index=True)
-
-# Merge the Dynasty ADP and Fantasy points DataFrames.
-board_df = dynasty_df.merge(board_df, how='left', on='Player')[['Player', 'POS', 'Fantasy Points', 'Avg ADP']].sort_values(by='Fantasy Points', ascending=False)
-
-# Import the Get_Sleeper_Rosters.py roster data.
-taken_df = Get_Sleeper_Rosters.roster_df
-
-# Take taken players out of the draft board.
-for _, row in taken_df.iterrows():
-    for player in row['Roster']:
-        board_df.drop(board_df.loc[board_df['Player'].str.contains(player)].index, inplace=True)
-board_df = board_df.dropna()
-
-# Generate a .csv file.
-board_df.to_csv('Dynasty_Draft_Board.csv')
+for pos in ['qb', 'rb', 'wr', 'te']:
+    board_df = get_draft_board(pos)
+    # Generate a .csv file.
+    board_df.to_csv(f'Dynasty_{pos}_Draft_Board.csv')
