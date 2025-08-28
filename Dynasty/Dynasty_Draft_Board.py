@@ -42,14 +42,14 @@ def compute_projected_points(pos: str) -> pd.DataFrame:
                 proj_df['INTS'] * scoring_weights['int'] +
                 proj_df['YDS.1'] * scoring_weights['rushing_yds'] +
                 proj_df['TDS.1'] * scoring_weights['rushing_td'] +
-                proj_df['FL'] * scoring_weights['fumble'])
+                proj_df['FL'] * scoring_weights['fumble']).round(2)
 
     elif pos == 'te':
         proj_df['Proj. Points'] = (
                 proj_df['REC'] * scoring_weights['receptions'] +
                 proj_df['YDS'] * scoring_weights['receiving_yds'] +
                 proj_df['TDS'] * scoring_weights['receiving_td'] +
-                proj_df['FL'] * scoring_weights['fumble'])
+                proj_df['FL'] * scoring_weights['fumble']).round(2)
 
     else:
         proj_df['Proj. Points'] = (
@@ -58,7 +58,7 @@ def compute_projected_points(pos: str) -> pd.DataFrame:
                 proj_df['REC'] * scoring_weights['receptions'] +
                 proj_df['YDS.1'] * scoring_weights['receiving_yds'] +
                 proj_df['TDS.1'] * scoring_weights['receiving_td'] +
-                proj_df['FL'] * scoring_weights['fumble'])
+                proj_df['FL'] * scoring_weights['fumble']).round(2)
 
     # Filter out raw projected stats.
     proj_df = proj_df[['Player', 'Proj. Points']]
@@ -76,23 +76,28 @@ def get_ecr_data(pos:str) -> pd.DataFrame:
     # Find the ecrData JSON in the html file. Load it in as a DataFrame.
     response = requests.get(ecr_url)
     match = re.search(r'var ecrData = (\{.*?\});', response.text)
+    if not match:
+        raise Exception(f'Cannot find ECR data for {pos}!')
+
     ecr_json = match.group(1)
     ecr_data = json.loads(ecr_json)
     players_list = (ecr_data.get('players', []))
     ecr_df = pd.DataFrame(players_list)
 
     ecr_df['Player'] = ecr_df['player_name'] + ' ' + ecr_df['player_team_id']
-    ecr_columns = ['Player', 'player_age', 'player_bye_week', 'pos_rank', 'rank_std']
+    ecr_columns = ['player_id', 'Player', 'player_age', 'player_bye_week', 'pos_rank', 'rank_std']
     ecr_df = ecr_df[ecr_columns]
-    ecr_df = ecr_df.rename({'player_age': 'Age',
+    ecr_df = ecr_df.rename({'player_id': 'fantasypros_id',
+                            'player_age': 'Age',
                             'player_bye_week': 'Bye',
                             'pos_rank': 'Rank',
                             'rank_std': 'Confidence'}, axis=1)
 
+    print(f'{pos} draft board complete.')
     return ecr_df
 
 def get_draft_board(pos: str) -> pd.DataFrame:
-
+    """ Combine projected fantasy point and ECR dataFrames and remove taken players. """
     if pos not in ['qb', 'rb', 'wr', 'te']:
         raise Exception(f'Invalid position: {pos}. Must be qb, rb, wr, or te. ')
 
@@ -101,14 +106,17 @@ def get_draft_board(pos: str) -> pd.DataFrame:
 
     # Merge projected points and ecr dataFrames.
     board_df = ecr_df.merge(stats_df, how='left', on='Player')
+    board_df = board_df.dropna()
 
     # Import the Get_Sleeper_Rosters.py roster data.
-    taken_df = Get_Sleeper_Rosters.roster_df
+    taken_df = Get_Sleeper_Rosters.rosters_df
 
     # Remove taken players from the draft board.
     for _, row in taken_df.iterrows():
-        for player in row['Roster']:
-            board_df.drop(board_df[board_df['Player'].str.contains(player)].index, inplace=True)
+        for player_id in row['fantasypros_ids']:
+            board_df.drop(board_df[board_df['fantasypros_id'] == int(player_id)].index, inplace=True)
+
+    board_df = board_df.drop('fantasypros_id', axis=1)
 
     return board_df
 
@@ -128,5 +136,5 @@ scoring_weights = {
 
 for pos in ['qb', 'rb', 'wr', 'te']:
     board_df = get_draft_board(pos)
-    # Generate a .csv file.
-    board_df.to_csv(f'Dynasty_{pos}_Draft_Board.csv')
+    board_df.to_csv(f'Dynasty_{pos}_Draft_Board.csv')    # Generate a .csv file.
+
